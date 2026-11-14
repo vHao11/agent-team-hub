@@ -27,7 +27,8 @@ test('Superagent adapter interoperates with the actual management routes and eng
     now: () => new Date(Date.UTC(2026, 10, 14, 0, 0, clock++)).toISOString() });
   const store = Object.assign(repo, { settings: () => parsed,
     read: { subscribedThreads: () => [], firstTrigger: () => undefined, threadTriggers: () => [] } });
-  const runtime = { ready: Promise.resolve(), store, engine, sources: { kind: () => undefined },
+  let stopStatus = 'stopping';
+  const runtime = { ready: Promise.resolve(), store, engine, executor: { stopStatus: async () => stopStatus }, sources: { kind: () => undefined },
     links: () => () => ({ url: '', label: { zh: '', en: '' } }), requestPass: () => {}, health: {}, machine: {}, configured: () => false };
   let handler: (req: any, res: any) => Promise<void>;
   const server = createServer((req, res) => {
@@ -57,6 +58,8 @@ test('Superagent adapter interoperates with the actual management routes and eng
     expect((await adapter.getStatus(first)).status).toBe('queued');
     expect(await adapter.cancel(first)).toEqual({ requested: true, confirmed: false });
     expect((await adapter.getStatus(first)).status).toBe('unknown');
+    stopStatus = 'stopped';
+    expect((await adapter.getStatus(first)).status).toBe('cancelled');
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
     const tempRoot = await fs.realpath(os.tmpdir()), target = await fs.realpath(workspace);
