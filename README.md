@@ -173,6 +173,6 @@ npm run build
 
 这是独立实现，未复制 HajimiWorkbench 或 dsh-task-ledger 源码，也未修改现有 Superagent 子模块。已核对本机看板接口并实现可选关联；Superagent 执行适配器基于已核对的管理接口，实际派发与停止确认的验证范围见 [协议说明](docs/adapter-protocol-v1.md)。
 
-“其他 harness 可接入”指通过通用业务接口使用台账、流水线、交付验收与能力库，也可以实现本机看板或执行器适配器。自动控制具体宿主仍需实现并验证该宿主的真实适配器。DSH 看板与两组业务流程已在本机 DSH 0.2.2-rc.1 的隔离 profile 中验证；0.3.0 尚未部署到正式 profile。
+“其他 harness 可接入”指通过通用业务接口使用台账、流水线、交付验收与能力库，也可以实现本机看板或执行器适配器。自动控制具体宿主仍需实现并验证该宿主的真实适配器。DSH 看板与两组业务流程已在本机 DSH 0.2.2-rc.1 的隔离 profile 中验证；本机正式 profile 已切换至 0.3.0 并验证旧关联。
 
 开源许可证：**MIT**。完整实施范围与后续接入事项见 [架构说明](docs/architecture.md) 和 [接入差距](docs/integration-gaps.md)。

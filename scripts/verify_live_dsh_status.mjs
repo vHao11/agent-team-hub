@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 const playwright = process.env.TEAMHUB_PLAYWRIGHT_ENTRY;
 const chrome = process.env.TEAMHUB_CHROME;
 const pipelineId = process.env.TEAMHUB_LIVE_PIPELINE_ID;
+const expectSuperagent = process.env.TEAMHUB_EXPECT_SUPERAGENT === '1';
 if (!playwright || !chrome) throw new Error('缺少本机浏览器测试依赖');
 if (pipelineId && !/^pipe_[a-z0-9]+$/.test(pipelineId)) throw new Error('无效的流水线 ID');
 const { chromium } = await import(pathToFileURL(playwright));
@@ -47,7 +48,7 @@ try {
   const failure = pipelineId ? 'TEAMHUB_LINK_FAIL' : 'TEAMHUB_CHECK_FAIL';
   const prompt = pipelineId
     ? `请仅调用一次 teamhub_pipeline_link 工具，参数为 ${JSON.stringify({ pipeline_id: pipelineId, workspace_ref: process.env.TEAMHUB_LIVE_WORKSPACE_REF || process.cwd() })}。这是系统验收测试流程；不要调用其他工具、操作桌面、派单或修改业务状态。如果工具结果 synced=true 且 cards 非空，只回复 ${success}；否则只回复 ${failure}。`
-    : `请仅调用一次 teamhub_status 工具进行只读集成验收，不要调用其他工具、操作桌面或修改数据。如果工具返回 dsh-todo-kanban 适配器 available=true，只回复 ${success}；否则只回复 ${failure}。`;
+    : `请仅调用一次 teamhub_status 工具进行只读集成验收，不要调用其他工具、操作桌面或修改数据。如果工具返回 dsh-todo-kanban 适配器 available=true${expectSuperagent ? '，且 dsh-superagent 执行适配器 available=true' : ''}，只回复 ${success}；否则只回复 ${failure}。`;
   await editor.fill(prompt);
   await page.getByRole('button', { name: '发送消息' }).click();
   const deadline = Date.now() + 60000;

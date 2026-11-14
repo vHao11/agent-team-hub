@@ -44,6 +44,7 @@ def redact(value: str) -> str:
 
 def run(args: list[str], directory: Path, env: dict[str, str], timeout: int = 45) -> str:
     result = subprocess.run(args, cwd=directory, env=env, text=True,
+                            encoding="utf-8", errors="replace",
                             capture_output=True, timeout=timeout)
     if result.returncode:
         raise RuntimeError(redact(f"Host command failed ({result.returncode}): {result.stderr[-1500:]}"))
@@ -203,7 +204,7 @@ def check_codex(executable: str, directory: Path, env: dict[str, str], connectio
     with (directory / "codex.log").open("w", encoding="utf-8") as log:
         child = subprocess.Popen([executable, "app-server", "--stdio"], cwd=workspace,
             env=env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=log,
-            text=True, bufsize=1)
+            text=True, encoding="utf-8", errors="replace", bufsize=1)
         rpc = CodexRpc(child)
         try:
             rpc.request("initialize", {"clientInfo": {"name": "teamhub_harness_check", "version": "0.1.0"},
@@ -214,7 +215,8 @@ def check_codex(executable: str, directory: Path, env: dict[str, str], connectio
             if not found or not found.get("serverCapabilities") or found.get("toolsError"):
                 raise RuntimeError("Codex did not initialize the MCP server")
             names = {tool["name"] for tool in found["tools"].values()}
-            expected = {"hub_context", "ledger_review", "catalog_publish_release", "team_toolset_get"}
+            expected = {"hub_context", "hub_integration_contract", "ledger_review",
+                        "catalog_publish_release", "team_toolset_get"}
             if not expected <= names:
                 raise RuntimeError("Codex discovered an incomplete Team Hub tool catalog")
             if call_tool:

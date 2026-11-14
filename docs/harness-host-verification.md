@@ -1,6 +1,19 @@
 # 其他 Harness 的真实宿主验证
 
-验证日期：2026-11-13（北京时间）。平台：Linux x64，Node.js 24.22.1。测试使用本仓库生成器输出的配置、同一套 Python MCP stdio 服务，以及独立演示 Hub。没有调用模型，没有读写用户 Windows 的配置、模型账户或正式台账。
+## Windows 复验（2026-11-14）
+
+使用 0.3.0 的 MCP 服务、生成的宿主配置和隔离演示 Hub，且不调用模型或修改现有宿主配置与正式台账：
+
+| 宿主 | 测试版本 | 实测结果 |
+| --- | --- | --- |
+| Claude Code | 2.1.325 | `claude mcp list` 显示已连接；未通过该宿主调用业务工具 |
+| Codex CLI | 0.167.0-alpha.4.1 | 发现 48 个工具（包括 `hub_integration_contract`）；临时线程实际调用只读 `hub_context` 成功 |
+
+本次没有安装或运行 OpenCode。以上结果分别证明连接、工具发现和一次只读调用；其他宿主的看板及自动执行仍需要各自实现并验证适配器。
+
+## Linux 验证（2026-11-13）
+
+平台：Linux x64，Node.js 24.22.1。测试使用本仓库生成器输出的配置、同一套 Python MCP stdio 服务，以及独立演示 Hub。没有调用模型，没有读写用户 Windows 的配置、模型账户或正式台账。
 
 ## 实测结果
 
@@ -12,7 +25,7 @@
 
 这些结果证明配置格式、进程启动和协议连接在对应版本上有效。`mcp list` 的成功不等于模型已经完成跨组业务任务。具体业务行为由独立的官方 MCP SDK → stdio → 真实 Hub 集成测试核验，见 [接入说明](../packages/INTEGRATION.md) 和 [验收记录](acceptance.md)。
 
-OpenCode V1 配置格式依据官方迁移文档提供；**本次没有启动 V1 二进制**。Windows、macOS，以及用户自己的模型会话仍需要在实际环境验收。宿主原生待办和自动派发不在这次 MCP 连接测试的范围内。
+OpenCode V1 配置格式依据官方迁移文档提供；**本次没有启动 V1 二进制**。其他平台、版本和用户自己的模型会话仍需要在实际环境验收。宿主原生待办和自动派发不在这次 MCP 连接测试的范围内。
 
 ## 复现
 
@@ -62,7 +75,7 @@ npm install --prefix /absolute/path/harness-test-runtime \
 
 还提供可选 `--codex-tool-call`：创建临时线程后，通过官方 `mcpServer/tool/call` 调用只读的 `hub_context`。该方法及其参数来自当前 CLI 生成的协议 JSON Schema。
 
-**本环境的这项额外检查没有通过**：创建线程时，容器内的 `bwrap` 无法创建 `NETLINK_ROUTE` socket，宿主在线程初始化阶段报权限错误。没有修改或关闭宿主沙箱来绕过它。默认验证报告仅记录已通过的配置、MCP 初始化与 30 个工具发现；不声称已经在 Codex 线程内调用业务工具。具备正常宿主运行环境的机器可以单独复验：
+**2026-11-13 Linux 容器的这项额外检查没有通过**：创建线程时，容器内的 `bwrap` 无法创建 `NETLINK_ROUTE` socket，宿主在线程初始化阶段报权限错误。没有修改或关闭宿主沙箱来绕过它。2026-11-14 Windows 复验则成功调用 `hub_context`，结果见上文。可以单独复验：
 
 ```bash
 .venv/bin/python scripts/verify-harness-hosts.py \

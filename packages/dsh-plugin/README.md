@@ -2,7 +2,7 @@
 
 Agent Team Hub 的 DSH 工具桥。使用官方 `defineTool` / `ctx.tools.register` 接口，注册 `teamhub_*` 工具。具体操作、安装和已验证范围见仓库 `packages/INTEGRATION.md`。
 
-本包 0.3.0 在 Windows 的隔离 **DSH 0.2.2-rc.1** profile 中完成宿主加载，并与真实 `dsh-todo-kanban`、独立 Python 看板完成跨组流程验证；原版 0.1.0 曾在 Linux 官方 rc.1 和 rc.2 中通过宿主加载验证。0.3.0 的 rc.2 与正式 profile 仍需分别验证。SDK 开发依赖固定 rc.2；测试未调用模型或启动真实 Superagent 执行器。
+本包 0.3.0 在 Windows 的隔离 **DSH 0.2.2-rc.1** profile 中完成宿主加载，并与真实 `dsh-todo-kanban`、独立 Python 看板完成跨组流程验证；本机正式 profile 也已验证旧关联和适配器发现。原版 0.1.0 曾在 Linux 官方 rc.1 和 rc.2 中通过宿主加载验证；0.3.0 的 rc.2 仍需复验。SDK 开发依赖固定 rc.2；测试未启动真实 Superagent 执行器。
 
 ```sh
 node packages/dsh-plugin/build.mjs
