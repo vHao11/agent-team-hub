@@ -31,6 +31,7 @@ let browser, page;
 let unregisterExternal;
 try {
   assert.equal(runtime.ctx.get('todoKanbanHub')?.apiVersion, 1, '看板 Cordis 服务未加载');
+  assert.equal(runtime.ctx.get('teamHubActions')?.apiVersion, 1, 'Hub 看板操作服务未加载');
   const clientDir = path.join(process.env.DSH_HOME, 'profiles/web/node_modules/dsh-team-hub/lib/client');
   const { adapters } = await import(pathToFileURL(path.join(clientDir, 'bridge.mjs')));
   const { registerStdioAdapters } = await import(pathToFileURL(path.join(clientDir, 'stdio-adapter.mjs')));
@@ -66,7 +67,16 @@ try {
     return response.json();
   });
   const cardIn = async (column, id) => (await board()).columns[column].find(card => card.id === id);
+  const boardAction = async (card, action, extra = {}) => {
+    const response = await page.request.post(`${baseUrl}/todo-kanban/api/drafts/${encodeURIComponent(card.id)}/hub-action`, {
+      data: { action, operation_id: op(), snapshot: { itemId: card.hub.itemId, attemptId: card.hub.attemptId,
+        generation: card.hub.generation, itemVersion: card.hub.itemVersion }, ...extra },
+    });
+    return { status: response.status(), body: await response.json() };
+  };
   assert.equal((await cardIn('todo', firstId)).hub.status, 'open');
+  const forbidden = await boardAction(await cardIn('todo', firstId), 'accept');
+  assert.equal(forbidden.status, 403, '看板操作必须受 Hub 身份权限约束');
   await runtime.ctx.get('todoKanbanHub').setSyncStatus('offline');
   assert.equal((await board()).hubSync.state, 'offline');
   await sync.execute({});
@@ -89,13 +99,29 @@ try {
   }
   let delivery = await deliver(chen, view.steps[0], '第一版'); await refresh();
   await sync.execute({}); assert.equal((await cardIn('person', firstId)).hub.status, 'review');
-  await lin.reviewDelivery(delivery.id, { operation_id: op(), expected_version: view.steps[0].item.version,
-    decision: 'request_changes', reason: '补充说明', ...context(view.steps[0]) });
+  const previewContinue = page.getByRole('button', { name: '继续', exact: true });
+  if (await previewContinue.isVisible().catch(() => false)) await previewContinue.click();
+  for (let attempt = 0; attempt < 3 && await page.locator('[role="dialog"]').count(); attempt++) {
+    const close = page.locator('[role="dialog"] button[aria-label="关闭"]').first();
+    if (await close.count()) await close.click(); else await page.keyboard.press('Escape');
+    await page.waitForTimeout(250);
+  }
+  await page.getByText('待办看板', { exact: true }).first().click();
+  await page.locator('.tk-overview').waitFor({ timeout: 25000 });
+  await page.locator('.tk-tile[data-status="person"]').first().click();
+  const reviewCard = page.locator('.tk-card').filter({ hasText: '隔离跨组流水线' }).first();
+  await reviewCard.getByRole('button', { name: '退回修改', exact: true }).click();
+  const reviewDialog = page.getByRole('dialog', { name: '退回修改' });
+  await reviewDialog.getByText('提交说明', { exact: true }).waitFor();
+  await reviewDialog.locator('textarea').fill('补充说明');
+  await reviewDialog.getByRole('button', { name: '确认退回修改' }).click();
+  await reviewDialog.waitFor({ state: 'detached' });
   await refresh(); await sync.execute({});
   assert.equal((await cardIn('doing', firstId)).hub.attemptId, view.steps[0].attempt.id);
   delivery = await deliver(chen, view.steps[0], '补充后'); await refresh();
-  await lin.reviewDelivery(delivery.id, { operation_id: op(), expected_version: view.steps[0].item.version,
-    decision: 'approve', ...context(view.steps[0]) });
+  await sync.execute({});
+  const approved = await boardAction(await cardIn('person', firstId), 'approve');
+  assert.equal(approved.status, 200, JSON.stringify(approved.body));
   await refresh();
   await sync.execute({ adapter: 'portable-board' });
   let externalBoard = JSON.parse(await fs.readFile(process.env.TEAMHUB_EXTERNAL_BOARD_STATE, 'utf8'));
@@ -123,16 +149,6 @@ try {
   assert.ok((await lin.getItem(view.steps[1].item.id)).bindings.some(binding => binding.local_todo_id === secondId));
 
   // 真实 DSH 页面：类别切换后可看到 Hub 状态，不显示该草稿的派单或删除按钮。
-  const previewContinue = page.getByRole('button', { name: '继续', exact: true });
-  if (await previewContinue.isVisible().catch(() => false)) await previewContinue.click();
-  for (let attempt = 0; attempt < 3 && await page.locator('[role="dialog"]').count(); attempt++) {
-    const close = page.locator('[role="dialog"] button[aria-label="关闭"]').first();
-    if (await close.count()) await close.click();
-    else await page.keyboard.press('Escape');
-    await page.waitForTimeout(250);
-  }
-  await page.getByText('待办看板', { exact: true }).first().click();
-  await page.locator('.tk-overview').waitFor({ timeout: 25000 });
   await page.locator('.tk-tile[data-status="done"]').first().click();
   const visible = page.locator('.tk-card').filter({ hasText: '隔离跨组流水线' });
   await visible.first().waitFor();
@@ -151,7 +167,7 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
   assert.deepEqual(errors, []);
   console.log('TEAMHUB_DSH_BOARD=' + JSON.stringify({ status: 'passed', adapter: 'todoKanbanHub', external_adapter: 'portable-board', teams: 2, members: 3,
-    cards: cards.length, automatic_sync: true, rework: true, duplicate_link: false, pipeline_status: view.pipeline.status,
+    cards: cards.length, automatic_sync: true, board_to_hub_review: true, wrong_actor_rejected: true, rework: true, duplicate_link: false, pipeline_status: view.pipeline.status,
     dsh_viewports: ['1440x900', '390x844'], browser_errors: errors.length }));
 } catch (error) {
   if (page) await page.screenshot({ path: path.join(process.env.TEAMHUB_EVIDENCE_DIR, 'dsh-board-failure.png') }).catch(() => {});

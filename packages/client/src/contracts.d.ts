@@ -11,7 +11,7 @@ export interface PipelineBoardSnapshot {
   schemaVersion:1; externalRef:string; itemId:string; pipelineId:string; stepKey:string; attemptId:string;
   generation:number; pipelineVersion:number; itemVersion:number; status:string; pipelineStatus:string;
   title:string; ownerTeamId:string; pendingTargetTeamId:string|null; assigneeId:string|null;
-  reviewerId:string; sourceUpdatedAt:string;
+  reviewerId:string; sourceUpdatedAt:string; specRevision?:number; currentDeliveryId?:string|null; superseded?:boolean;
 }
 export interface RunHandle { session_id?:string; run_id?:string; status?:'queued'|'starting'|'running'|'waiting_input'; }
 export interface InputSnapshot {

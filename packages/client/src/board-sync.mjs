@@ -126,6 +126,7 @@ export class PipelineBoardSync {
       pipelineId: view.pipeline.id, stepKey: step.step_key, attemptId: step.attempt.id,
       generation: view.pipeline.generation, pipelineVersion: view.pipeline.version, itemVersion: item.version,
       status: item.status, pipelineStatus: view.pipeline.status, title: item.title,
+      specRevision: item.spec_revision, currentDeliveryId: item.current_delivery_id ?? null,
       ownerTeamId: item.owner_team_id, pendingTargetTeamId: item.pending_target_team_id ?? null,
       assigneeId: item.assignee_id ?? null, reviewerId: item.reviewer_id, sourceUpdatedAt: item.updated_at };
   }
@@ -133,6 +134,18 @@ export class PipelineBoardSync {
     const view = await this.client.getPipeline(entry.pipeline_id);
     const instance = await this.bridge.instance();
     const synced = [];
+    // 回退可能为同一步创建新事项；旧卡片仍保留，但须明确标记历史轮次。
+    const currentIds = new Set(view.steps.map(step => step.item?.id).filter(Boolean));
+    for (const [oldId, cardId] of Object.entries(entry.linked || {})) {
+      if (currentIds.has(oldId)) continue;
+      const oldStep = view.steps.find(step => step.attempts?.some(attempt => attempt.work_item_id === oldId));
+      if (!oldStep) continue;
+      const oldAttempt = oldStep.attempts.filter(attempt => attempt.work_item_id === oldId).at(-1);
+      const detail = await this.client.getItem(oldId);
+      const historical = this.snapshot(view, { ...oldStep, attempt: oldAttempt }, detail.item);
+      await adapter.ensureLinkedCard({ snapshot: { ...historical, superseded: true }, external_ref: historical.externalRef,
+        item: detail.item, workspace_ref: entry.workspace_ref, draftId: cardId });
+    }
     for (const step of view.steps) {
       if (!step.item || !step.attempt) continue;
       const item = step.item;

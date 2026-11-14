@@ -12,7 +12,7 @@ import { AdapterRegistry } from '../lib/client/bridge.mjs';
 test('actual SDK accepts tool definitions and plugin registers the native tools', () => {
   const registered = [];
   apply({ tools: { register: tool => registered.push(tool) } }, Config({}));
-  assert.deepEqual(inject, ['tools']); assert.equal(registered.length, 23);
+  assert.deepEqual(inject, ['tools']); assert.equal(registered.length, 25);
   assert.equal(new Set(registered.map(tool => tool.name)).size, registered.length);
   assert.ok(registered.some(tool => tool.name === 'teamhub_run_start'));
   assert.ok(registered.some(tool => tool.name === 'teamhub_pipeline_link'));

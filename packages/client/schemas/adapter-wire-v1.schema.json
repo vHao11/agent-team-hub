@@ -21,7 +21,8 @@
         "pipelineStatus": { "enum": ["draft", "active", "paused", "completed", "cancelled"] },
         "title": { "type": "string", "minLength": 1 }, "ownerTeamId": { "$ref": "#/$defs/id" },
         "pendingTargetTeamId": { "type": ["string", "null"] }, "assigneeId": { "type": ["string", "null"] },
-        "reviewerId": { "$ref": "#/$defs/id" }, "sourceUpdatedAt": { "type": "string", "minLength": 1 }
+        "reviewerId": { "$ref": "#/$defs/id" }, "sourceUpdatedAt": { "type": "string", "minLength": 1 },
+        "specRevision": { "type": "integer", "minimum": 1 }, "currentDeliveryId": { "type": ["string", "null"] }, "superseded": { "type": "boolean" }
       }
     },
     "request": {

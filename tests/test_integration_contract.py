@@ -9,4 +9,7 @@ def test_integration_contract_is_authenticated_and_versioned(api):
     assert result['local_adapter_protocol']['version'] == 1
     assert set(result['local_adapter_protocol']['kinds']) == {'board', 'executor'}
     assert result['semantics']['business_completion_requires_review'] is True
-    assert result['semantics']['board_sync_direction'] == 'hub-to-board'
+    assert result['semantics']['board_sync_direction'] == 'bidirectional-explicit-commands'
+    assert result['semantics']['workflow_dependencies'] == 'directed-acyclic-graph'
+    assert result['semantics']['rollback_invalidates_descendants'] is True
+    assert result['semantics']['automatic_dispatch_requires_per_pipeline_opt_in'] is True

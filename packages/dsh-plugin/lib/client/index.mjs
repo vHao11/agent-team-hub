@@ -57,6 +57,7 @@ export class HubClient {
   getItem(id) { return this.request('GET', `/work-items/${segment(id)}`); }
   getPipeline(id) { return this.request('GET', `/pipelines/${segment(id)}`); }
   listPipelines() { return this.request('GET', '/pipelines'); }
+  rollbackPipeline(id, step, data) { return this.request('POST', `/pipelines/${segment(id)}/steps/${segment(step)}/rollback`, { operation_id: operationId(), ...data }); }
   createItem(data) { return this.request('POST', '/work-items', { operation_id: operationId(), ...data }); }
   command(id, action, data) {
     const allowed = ['accept', 'decline', 'start', 'cancel', 'transfer-requests', 'accept-transfer', 'progress', 'spec', 'dependencies'];

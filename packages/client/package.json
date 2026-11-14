@@ -1,10 +1,10 @@
 {
   "name": "@agent-team-hub/client",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "license": "MIT",
   "description": "HTTP client and local bridge contracts for Agent Team Hub",
-  "exports": {".": "./src/index.mjs", "./bridge": "./src/bridge.mjs", "./board-sync": "./src/board-sync.mjs", "./stdio-adapter": "./src/stdio-adapter.mjs", "./contracts": "./src/contracts.d.ts", "./schemas/*": "./schemas/*", "./installer": "./src/installer.mjs"},
+  "exports": {".": "./src/index.mjs", "./bridge": "./src/bridge.mjs", "./board-sync": "./src/board-sync.mjs", "./auto-dispatch": "./src/auto-dispatch.mjs", "./stdio-adapter": "./src/stdio-adapter.mjs", "./contracts": "./src/contracts.d.ts", "./schemas/*": "./schemas/*", "./installer": "./src/installer.mjs"},
   "engines": {"node": ">=22"},
   "scripts": {"test": "node --test test/*.test.mjs"},
   "files": ["src", "schemas"]

@@ -1,4 +1,4 @@
-"""在临时 DSH_HOME 中验证真实 DSH、看板和 Hub 的串行跨组关联。"""
+"""在临时 DSH_HOME 中验证真实 DSH、看板和 Hub 的跨组双向关联。"""
 from __future__ import annotations
 
 import argparse

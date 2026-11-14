@@ -91,6 +91,9 @@ class StdioAdapter {
           finish(new HubError('INVALID_ADAPTER_RESULT', 'Adapter response envelope does not match the request.')); return;
         }
         if (Object.hasOwn(response, 'error')) {
+          if (response.error?.data?.code === 'ADAPTER_PRECONDITION_FAILED') {
+            finish(new HubError('ADAPTER_PRECONDITION_FAILED', 'Adapter rejected the request before launching the host.')); return;
+          }
           finish(new HubError('ADAPTER_REMOTE_ERROR', 'Adapter reported an error.')); return;
         }
         finish(null, response.result);

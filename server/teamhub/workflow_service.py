@@ -1,4 +1,4 @@
-"""串行流水线领域规则；事项、交付和审核仍由 Hub 持有。"""
+"""流水线领域规则；事项、交付和审核仍由 Hub 持有。"""
 from __future__ import annotations
 
 import hashlib
@@ -8,6 +8,15 @@ from sqlalchemy import func, select
 
 from . import db as m
 from .service import ACTIVE_RUNS, now, require, row, rows, uid
+
+
+def step_dependencies(steps):
+    """Resolve legacy serial definitions and explicit dependency lists."""
+    result = {}
+    for index, step in enumerate(steps):
+        explicit = step.get("depends_on")
+        result[step["key"]] = list(explicit) if explicit is not None else ([steps[index - 1]["key"]] if index else [])
+    return result
 
 
 def definition_errors(definition):
@@ -35,6 +44,28 @@ def definition_errors(definition):
         capabilities = step.get("capabilities") or []
         if len({choice["capability_id"] for choice in capabilities}) != len(capabilities):
             errors.append(f"{step['name']}的能力不能重复。")
+    if len(step_keys) == len(set(step_keys)):
+        dependencies = step_dependencies(steps)
+        for key, parents in dependencies.items():
+            if len(parents) != len(set(parents)):
+                errors.append(f"步骤 {key} 的依赖不能重复。")
+            if any(parent not in dependencies for parent in parents):
+                errors.append(f"步骤 {key} 引用了不存在的依赖。")
+            if key in parents:
+                errors.append(f"步骤 {key} 不能依赖自身。")
+        visiting, visited = set(), set()
+        def visit(key):
+            if key in visiting:
+                return True
+            if key in visited:
+                return False
+            visiting.add(key)
+            cyclic = any(visit(parent) for parent in dependencies[key] if parent in dependencies)
+            visiting.remove(key)
+            visited.add(key)
+            return cyclic
+        if any(visit(key) for key in dependencies if key not in visited):
+            errors.append("步骤依赖不能形成环。")
     return errors
 
 
@@ -209,26 +240,31 @@ class Workflows:
             actions = {"draft": ["start", "cancel"], "active": ["pause", "cancel"],
                        "paused": ["resume", "cancel"], "completed": [], "cancelled": []}[pipeline["status"]]
         return {"pipeline": pipeline, "template_version": row(connection, m.workflow_versions, pipeline["template_version_id"]),
-                "steps": result, "allowed_actions": actions}
+                "steps": result, "allowed_actions": actions,
+                "can_rollback": manager and pipeline["status"] in ("active", "paused", "completed")}
 
     def activate_next(self, connection, pipeline, actor):
         if pipeline["status"] != "active":
             return
         steps = rows(connection, select(m.pipeline_steps).where(m.pipeline_steps.c.pipeline_id == pipeline["id"]).order_by(m.pipeline_steps.c.position))
-        previous = None
+        dependencies = step_dependencies([step["definition"] for step in steps])
+        current_items = {}
         for step in steps:
             if step["current_attempt_id"]:
                 attempt = row(connection, m.pipeline_attempts, step["current_attempt_id"])
-                item = row(connection, m.work_items, attempt["work_item_id"])
-                if item["status"] != "done":
-                    return
-                previous = item
+                current_items[step["step_key"]] = row(connection, m.work_items, attempt["work_item_id"])
+        blocked = []
+        for step in steps:
+            key = step["step_key"]
+            if key in current_items:
+                continue
+            parents = dependencies[key]
+            if any(parent not in current_items or current_items[parent]["status"] != "done" for parent in parents):
                 continue
             reviewer = row(connection, m.users, step["reviewer_id"])
             if not reviewer["active"]:
-                connection.execute(m.pipelines.update().where(m.pipelines.c.id == pipeline["id"]).values(
-                    blocked_reason="下一步骤的验收人已停用，需要重新安排。", updated_at=now()))
-                return
+                blocked.append(step["definition"]["name"])
+                continue
             definition = step["definition"]
             pinned = step["capability_releases"]
             if pinned is None:
@@ -243,22 +279,30 @@ class Workflows:
                 "reviewer_id": step["reviewer_id"], "acceptance_spec": definition["acceptance_spec"],
                 "priority": pipeline["priority"], "due_at": pipeline["due_at"]}, event_actor=actor)
             upstream = []
-            if previous and previous["current_delivery_id"]:
-                delivery = row(connection, m.deliveries, previous["current_delivery_id"])
-                upstream.append({"work_item_id": previous["id"], "delivery_id": delivery["id"],
-                                 "spec_revision": delivery["spec_revision"], "summary": delivery["summary"],
-                                 "artifacts": delivery["artifacts"]})
-            attempt = dict(id=uid("attempt"), step_id=step["id"], ordinal=1, work_item_id=item["id"],
+            for parent in parents:
+                source = current_items[parent]
+                if source["current_delivery_id"]:
+                    delivery = row(connection, m.deliveries, source["current_delivery_id"])
+                    upstream.append({"work_item_id": source["id"], "delivery_id": delivery["id"],
+                                     "spec_revision": delivery["spec_revision"], "summary": delivery["summary"],
+                                     "artifacts": delivery["artifacts"]})
+            ordinal = (connection.execute(select(func.max(m.pipeline_attempts.c.ordinal)).where(
+                m.pipeline_attempts.c.step_id == step["id"])).scalar_one() or 0) + 1
+            attempt = dict(id=uid("attempt"), step_id=step["id"], ordinal=ordinal, work_item_id=item["id"],
                            input_snapshot={"upstream_deliveries": upstream}, created_at=now(), ended_at=None)
             connection.execute(m.pipeline_attempts.insert().values(**attempt))
             connection.execute(m.pipeline_steps.update().where(m.pipeline_steps.c.id == step["id"]).values(current_attempt_id=attempt["id"]))
-            connection.execute(m.pipelines.update().where(m.pipelines.c.id == pipeline["id"]).values(blocked_reason=None, updated_at=now()))
+            current_items[key] = item
             self.hub.emit(connection, "pipeline.step_activated", pipeline["id"], actor,
                           {"step_id": step["id"], "attempt_id": attempt["id"], "work_item_id": item["id"]})
-            return
-        connection.execute(m.pipelines.update().where(m.pipelines.c.id == pipeline["id"]).values(
-            status="completed", blocked_reason=None, version=m.pipelines.c.version + 1, updated_at=now()))
-        self.hub.emit(connection, "pipeline.completed", pipeline["id"], actor, {})
+        if len(current_items) == len(steps) and all(item["status"] == "done" for item in current_items.values()):
+            connection.execute(m.pipelines.update().where(m.pipelines.c.id == pipeline["id"]).values(
+                status="completed", blocked_reason=None, version=m.pipelines.c.version + 1, updated_at=now()))
+            self.hub.emit(connection, "pipeline.completed", pipeline["id"], actor, {})
+        else:
+            reason = f"步骤验收人已停用：{'、'.join(blocked)}。" if blocked else None
+            connection.execute(m.pipelines.update().where(m.pipelines.c.id == pipeline["id"]).values(
+                blocked_reason=reason, updated_at=now()))
 
     def control(self, actor, identifier, action, payload):
         def apply(connection):
@@ -295,6 +339,55 @@ class Workflows:
                 require(False, "UNKNOWN_ACTION", "不支持的流程操作。", 404)
             return self.pipeline_view(connection, actor, row(connection, m.pipelines, identifier))
         return self.hub.mutate(actor, f"pipelines/{identifier}/{action}", payload, apply)
+
+    def rollback(self, actor, identifier, step_key, payload):
+        """Invalidate a step and its descendants while preserving their evidence."""
+        def apply(connection):
+            pipeline = row(connection, m.pipelines, identifier)
+            self.pipeline_access(actor, pipeline)
+            require(pipeline["version"] == payload["expected_version"], "VERSION_CONFLICT", "流程已变化，请刷新。", 409)
+            require(pipeline["status"] in ("active", "paused", "completed"), "INVALID_STATE", "当前流程无法回退。", 409)
+            steps = rows(connection, select(m.pipeline_steps).where(m.pipeline_steps.c.pipeline_id == identifier).order_by(m.pipeline_steps.c.position))
+            by_key = {step["step_key"]: step for step in steps}
+            target = by_key.get(step_key)
+            require(target is not None and target["current_attempt_id"], "STEP_NOT_ACTIVE", "只能回退已激活的步骤。", 409)
+            dependencies = step_dependencies([step["definition"] for step in steps])
+            affected = {step_key}
+            while True:
+                expanded = affected | {key for key, parents in dependencies.items() if affected.intersection(parents)}
+                if expanded == affected:
+                    break
+                affected = expanded
+            for key in affected:
+                step = by_key[key]
+                if not step["current_attempt_id"]:
+                    continue
+                attempt = row(connection, m.pipeline_attempts, step["current_attempt_id"])
+                active = connection.execute(select(m.runs.c.id).where(
+                    m.runs.c.work_item_id == attempt["work_item_id"], m.runs.c.status.in_(ACTIVE_RUNS))).first()
+                require(not active, "RUN_NOT_FINISHED", "受回退影响的步骤仍有未确认结束的执行，请先确认停止或完成。", 409)
+            invalidated = []
+            for step in steps:
+                if step["step_key"] not in affected or not step["current_attempt_id"]:
+                    continue
+                attempt = row(connection, m.pipeline_attempts, step["current_attempt_id"])
+                item = row(connection, m.work_items, attempt["work_item_id"])
+                connection.execute(m.pipeline_attempts.update().where(m.pipeline_attempts.c.id == attempt["id"]).values(ended_at=now()))
+                if item["status"] not in ("done", "cancelled"):
+                    self.hub.change_item(connection, item, status="cancelled", pending_target_team_id=None,
+                                         next_action="流程回退，当前轮次已失效")
+                connection.execute(m.pipeline_steps.update().where(m.pipeline_steps.c.id == step["id"]).values(current_attempt_id=None))
+                invalidated.append({"step_key": step["step_key"], "attempt_id": attempt["id"], "work_item_id": item["id"]})
+            status = "active" if pipeline["status"] == "completed" else pipeline["status"]
+            connection.execute(m.pipelines.update().where(m.pipelines.c.id == identifier).values(
+                status=status, generation=pipeline["generation"] + 1, version=pipeline["version"] + 1,
+                blocked_reason=None, updated_at=now()))
+            self.hub.emit(connection, "pipeline.rollback", identifier, actor,
+                          {"step_key": step_key, "reason": payload["reason"], "invalidated": invalidated})
+            if status == "active":
+                self.activate_next(connection, row(connection, m.pipelines, identifier), actor)
+            return self.pipeline_view(connection, actor, row(connection, m.pipelines, identifier))
+        return self.hub.mutate(actor, f"pipelines/{identifier}/steps/{step_key}/rollback", payload, apply)
 
     def reassign(self, actor, identifier, step_key, payload):
         def apply(connection):

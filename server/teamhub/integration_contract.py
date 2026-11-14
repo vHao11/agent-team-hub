@@ -21,6 +21,9 @@ def integration_contract():
             'external_execution_requires_explicit_start': True,
             'cancellation_requires_confirmation': True,
             'unknown_execution_blocks_duplicate_start': True,
-            'board_sync_direction': 'hub-to-board',
+            'board_sync_direction': 'bidirectional-explicit-commands',
+            'workflow_dependencies': 'directed-acyclic-graph',
+            'rollback_invalidates_descendants': True,
+            'automatic_dispatch_requires_per_pipeline_opt_in': True,
         },
     }

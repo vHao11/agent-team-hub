@@ -165,6 +165,8 @@ class WorkflowStep(Input):
     acceptance_spec: Criteria
     required_artifact_kinds: list[ShortText] = Field(min_length=1, max_length=20)
     capabilities: list[CapabilityChoice] | None = Field(default=None, max_length=100)
+    # Missing/null preserves the original serial order; [] is an independent root.
+    depends_on: list[Identifier] | None = Field(default=None, max_length=30)
 
 
 class WorkflowDefinition(Input):
@@ -206,6 +208,10 @@ class PipelineCreate(Mutation):
 
 class PipelineReassign(Versioned):
     target_team_id: Identifier
+    reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=10000)]
+
+
+class PipelineRollback(Versioned):
     reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=10000)]
 
 

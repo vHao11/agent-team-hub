@@ -8,6 +8,7 @@ import { clientInstanceId, defaultStateDir, listOutbox, queueOperation, replayOu
 import { AdapterRegistry, LocalBridge } from '../lib/client/bridge.mjs';
 import { PipelineBoardSync } from '../lib/client/board-sync.mjs';
 import { registerStdioAdapters } from '../lib/client/stdio-adapter.mjs';
+import { AutoDispatcher } from '../lib/client/auto-dispatch.mjs';
 
 const ARTIFACT_TYPES = Object.freeze({
   '.md': 'text/markdown', '.txt': 'text/plain', '.log': 'text/plain',
@@ -15,7 +16,7 @@ const ARTIFACT_TYPES = Object.freeze({
   '.yaml': 'text/plain', '.yml': 'text/plain', '.toml': 'text/plain',
 });
 
-const HELP = `Agent Team Hub CLI 0.2.0 (Node 22+)
+const HELP = `Agent Team Hub CLI 0.3.0 (Node 22+)
 Environment: TEAMHUB_URL, TEAMHUB_TOKEN, TEAMHUB_STATE_DIR
 Every command prints JSON. Do not place tokens in command history.
 
@@ -37,6 +38,10 @@ teamhub adapters list --adapter-config PATH
 teamhub board link ITEM_ID --adapter NAME --workspace-ref REF --adapter-config PATH
 teamhub pipelines link PIPELINE_ID --adapter NAME --workspace-ref REF --adapter-config PATH [--work-item-id ID --local-todo-id ID]
 teamhub pipelines sync|unlink|unlock [PIPELINE_ID] --adapter NAME --adapter-config PATH
+teamhub pipelines rollback PIPELINE_ID --step-key KEY --version N --data @rollback.json
+teamhub automation enable PIPELINE_ID --adapter NAME --workspace-ref REF --adapter-config PATH [--auto-accept]
+teamhub automation disable PIPELINE_ID --adapter-config PATH
+teamhub automation tick|run|unlock --adapter-config PATH [--interval SECONDS]
 teamhub runs start ITEM_ID --adapter NAME --workspace-ref REF --version N --adapter-config PATH [--data @run.json]
 teamhub runs reconcile|cancel-execution DISPATCH_ID --adapter-config PATH
 teamhub tools list [--q TEXT] [--kind skill]
@@ -66,7 +71,7 @@ function parse(values) {
     const token = values[index];
     if (token === '--') { tail.push(...values.slice(index + 1)); break; }
     if (!token.startsWith('--')) { positional.push(token); continue; }
-    const key = token.slice(2); if (['help', 'queue'].includes(key)) options[key] = true;
+    const key = token.slice(2); if (['help', 'queue', 'auto-accept'].includes(key)) options[key] = true;
     else { const value = values[++index]; if (value === undefined || value.startsWith('--')) throw new HubError('ARGUMENT_REQUIRED', `--${key} needs a value.`); options[key] = value; }
   }
   return { positional, options, tail };
@@ -95,6 +100,27 @@ async function main() {
   else if (group === 'board' && action === 'link') result = await localBridge().linkBoard(need(id, 'item id'),
     { adapter: need(o.adapter, '--adapter'), workspace_ref: need(o['workspace-ref'], '--workspace-ref'),
       operation_id: write().operation_id });
+  else if (group === 'pipelines' && action === 'rollback') result = await client.rollbackPipeline(need(id, 'pipeline id'), need(o['step-key'], '--step-key'), versioned());
+  else if (group === 'automation') {
+    const auto = new AutoDispatcher(client, localBridge());
+    if (action === 'enable') result = await auto.enable({ pipeline_id: need(id, 'pipeline id'), adapter: need(o.adapter, '--adapter'),
+      workspace_ref: need(o['workspace-ref'], '--workspace-ref'), auto_accept: o['auto-accept'] === true });
+    else if (action === 'disable') result = await auto.disable(need(id, 'pipeline id'));
+    else if (action === 'tick') result = await auto.tick();
+    else if (action === 'unlock') result = await auto.lock.releaseStaleLock();
+    else if (action === 'run') {
+      const seconds = numeric(o.interval || 15, '--interval');
+      if (seconds < 5 || seconds > 600) throw new HubError('INVALID_ARGUMENT', '--interval must be between 5 and 600 seconds.');
+      let running = true;
+      process.once('SIGINT', () => { running = false; }); process.once('SIGTERM', () => { running = false; });
+      while (running) {
+        try { process.stdout.write(JSON.stringify(await auto.tick()) + '\n'); }
+        catch (error) { process.stdout.write(JSON.stringify({ error: error.code || 'AUTOMATION_FAILED', message: error.message }) + '\n'); }
+        if (running) await new Promise(resolve => setTimeout(resolve, seconds * 1000));
+      }
+      return;
+    } else throw new HubError('UNKNOWN_COMMAND', 'Use automation enable, disable, tick, run or unlock.');
+  }
   else if (group === 'pipelines') {
     const bridge = localBridge();
     const adapter = need(o.adapter, '--adapter');
@@ -164,7 +190,7 @@ async function main() {
   } else throw new HubError('UNKNOWN_COMMAND', 'Unknown command. Run teamhub --help.');
   process.stdout.write(JSON.stringify(result, null, 2) + '\n');
   if (result?.status === 'failed' || result?.status === 'timed_out' || result?.synced === false
-      || (Array.isArray(result) && result.some(value => value?.synced === false))) process.exitCode = 1;
+      || (Array.isArray(result) && result.some(value => value?.synced === false || value?.ok === false))) process.exitCode = 1;
 }
 main().catch(error => {
   process.stderr.write(JSON.stringify(error.toJSON?.() ?? { error: { code: 'CLI_ERROR', message: error.message } }, null, 2) + '\n');

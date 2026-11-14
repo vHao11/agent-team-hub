@@ -7,6 +7,8 @@ import { DshKanbanAdapter, PipelineBoardSync } from './client/board-sync.mjs';
 import { registerStdioAdapters } from './client/stdio-adapter.mjs';
 import { DshSuperagentAdapter } from './superagent-adapter.mjs';
 import { createToolDefinitions } from './tools.mjs';
+import { createBoardActions } from './board-actions.mjs';
+import { AutoDispatcher } from './client/auto-dispatch.mjs';
 
 export const name = 'team-hub';
 export const inject = ['tools'];
@@ -40,13 +42,15 @@ export function apply(ctx, config = {}) {
     return syncs.get(selected);
   };
   const sync = boardSyncFor();
+  const autoDispatch = new AutoDispatcher(client, bridge);
+  if (typeof ctx.provide === 'function') ctx.provide('teamHubActions', createBoardActions(client, sync));
   if (typeof ctx.get === 'function' && typeof ctx.effect === 'function') {
     ctx.effect(() => adapters.registerBoard('dsh-todo-kanban', new DshKanbanAdapter(() => ctx.get('todoKanbanHub'))),
       'team-hub: todo-kanban adapter');
     if (config.adapterConfigFile) ctx.effect(() => registerStdioAdapters(config.adapterConfigFile, adapters),
       'team-hub: external adapters');
     if (config.superagentUrl) ctx.effect(() => adapters.registerExecutor('dsh-superagent', new DshSuperagentAdapter({
-      url: config.superagentUrl, taskType: config.superagentTaskType || '', timeout: config.timeoutMs || 20000,
+      url: config.superagentUrl, taskType: config.superagentTaskType || '', stateDir: bridge.stateDir, timeout: config.timeoutMs || 20000,
     })), 'team-hub: Superagent adapter');
     ctx.effect(() => {
       const tick = () => {
@@ -57,6 +61,9 @@ export function apply(ctx, config = {}) {
             void adapters.boards.get(name)?.setSyncStatus?.('offline').catch(() => {});
           });
         }
+        void autoDispatch.tick().catch(error => {
+          autoDispatch.lastResult = { state: 'degraded', error: error.code || 'AUTOMATION_FAILED', message: error.message };
+        });
       };
       void tick();
       const seconds = Math.max(5, Math.min(600, Number(config.boardSyncSeconds) || 15));
@@ -64,5 +71,5 @@ export function apply(ctx, config = {}) {
       return () => clearInterval(timer);
     }, 'team-hub: pipeline board sync');
   }
-  for (const tool of createToolDefinitions(defineTool, client, bridge, adapters, sync, boardSyncFor)) ctx.tools.register(tool);
+  for (const tool of createToolDefinitions(defineTool, client, bridge, adapters, sync, boardSyncFor, autoDispatch)) ctx.tools.register(tool);
 }

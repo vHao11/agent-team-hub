@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -17,6 +18,11 @@ test('Superagent adapter uses the management API and never treats stop acknowled
     if (req.url === '/orchestrator/api/state') result = { setup: { problem: null }, health: { runtime: { state: 'ready' } }, paused: false };
     else if (req.url === '/orchestrator/api/settings') result = { blocks: { executor: { value: { directoryMode: 'fixed', taskTypes: [] } } }, environment: { root: workspace } };
     else if (req.url === '/orchestrator/api/tasks') { posted = JSON.parse(body); posts++; result = { ticketId: 'ticket-1', ticket }; }
+    else if (req.url?.startsWith('/orchestrator/api/decisions?')) {
+      const trigger = createHash('sha256').update(JSON.stringify(['operator-task', posted.requestId, posted.title, posted.request, '', '', 'kanban-task'])).digest('hex').slice(0, 32);
+      result = req.url.includes('offset=0') ? { items: [], next_offset: 100 }
+        : { items: [{ triggerIds: [trigger], ticketId: 'ticket-1' }], next_offset: null };
+    }
     else if (req.url === '/orchestrator/api/tickets/ticket-1/stop') { stops++; ticket = { stage: 'ended', ended: { by: 'human', outcome: 'stopped' } }; result = { stopped: true }; }
     else if (req.url === '/orchestrator/api/tickets/ticket-1') result = ticket;
     else { res.writeHead(404); res.end(); return; }
@@ -24,7 +30,7 @@ test('Superagent adapter uses the management API and never treats stop acknowled
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
-  const adapter = new DshSuperagentAdapter({ url: `http://127.0.0.1:${server.address().port}` });
+  const adapter = new DshSuperagentAdapter({ url: `http://127.0.0.1:${server.address().port}`, stateDir: path.join(workspace, 'bridge') });
   const input = { item_id: 'item-1', run_id: 'run-1', dispatch_id: 'dispatch-1', workspace_ref: workspace,
     input_snapshot: { title: '合成任务', description: '冻结说明', acceptance_spec: ['核对结果'] },
     capability_releases: [], spec_revision: 2, assignment_generation: 3 };
@@ -39,6 +45,9 @@ test('Superagent adapter uses the management API and never treats stop acknowled
   const handle = await adapter.start(input);
   assert.equal(handle.run_id, 'ticket-1'); assert.equal(handle.status, 'queued');
   assert.equal(posted.requestId, 'dispatch-1'); assert.match(posted.request, /冻结说明/);
+  assert.equal((await adapter.probe()).canRecover, true);
+  assert.equal((await adapter.findByDispatchId('dispatch-1')).run_id, 'ticket-1');
+  assert.equal(posts, 2, '恢复只读取决策，不能再次派单');
   assert.equal((await adapter.getStatus(handle)).status, 'queued');
   assert.deepEqual(await adapter.cancel(handle), { requested: true, confirmed: false });
   assert.equal((await adapter.getStatus(handle)).status, 'unknown');

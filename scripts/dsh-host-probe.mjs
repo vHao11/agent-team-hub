@@ -16,8 +16,10 @@ const runtime = await runProfile({
 });
 try {
   const names = runtime.ctx.tools.definitions().map(tool => tool.name).filter(name => name.startsWith('teamhub_'));
-  assert.equal(names.length, 23);
-  assert.equal(new Set(names).size, 23);
+  assert.equal(names.length, 25);
+  assert.equal(new Set(names).size, 25);
+  assert.ok(names.includes('teamhub_pipeline_automation'));
+  assert.ok(names.includes('teamhub_pipeline_rollback'));
   const status = JSON.parse(await runtime.ctx.tools.get('teamhub_status').execute({}));
   assert.equal(status.context.me.id, 'u-lin');
   assert.ok(status.client_instance_id);

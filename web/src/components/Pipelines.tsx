@@ -21,7 +21,7 @@ export function Pipelines({ bootstrap, notify, onOpenItem, initialVersion, clear
     <ErrorBanner error={error || templates.error} onRetry={() => { refresh(); templates.refresh(); }} />
     {loading ? <Loading label="正在读取流水线…" /> : data?.items.length ? <div className="workflow-list">{data.items.map(view => <article className="workflow-card pipeline-card" key={view.pipeline.id}>
       <div className="workflow-card-header"><div><h2>{view.pipeline.title}</h2><p>{view.pipeline.description || '未填写目标说明'}</p><small>{view.template_version.definition.name} · v{view.template_version.version} · {bootstrap.projects.find(project => project.id === view.pipeline.project_id)?.name || view.pipeline.project_id}</small></div><span className="subtle-badge">{pipelineLabels[view.pipeline.status]}</span></div>
-      <div className="workflow-preview">{view.steps.map((step, index) => <span key={step.id}>{index > 0 && <b>→</b>}<span className={step.state === 'completed' ? 'pipeline-step-done' : ''}>{step.definition.name}<small> {stepLabels[step.state] || step.state}</small></span></span>)}</div>
+      <div className="workflow-preview">{view.steps.map(step => <span key={step.id}><span className={step.state === 'completed' ? 'pipeline-step-done' : ''}>{step.definition.name}<small> {stepLabels[step.state] || step.state}</small></span></span>)}</div>
       {view.pipeline.blocked_reason && <div className="warning-note">{view.pipeline.blocked_reason}</div>}
       <div className="workflow-actions"><button className="button button-small" onClick={() => setSelected(view.pipeline.id)}>查看详情</button></div>
     </article>)}</div> : !error && <EmptyState title="还没有流水线任务" text="选择已发布的模板，为每个角色绑定团队和验收人。" action={<button className="button" onClick={() => setCreating(true)}><FilePlus2 size={16} />创建流水线</button>} />}
@@ -74,6 +74,7 @@ function PipelineDetail({ id, bootstrap, onClose, onOpenItem, onChanged, notify 
   const [busy, setBusy] = useState('');
   const [actionError, setActionError] = useState<unknown>(null);
   const [reassign, setReassign] = useState<PipelineStepView | null>(null);
+  const [rollback, setRollback] = useState<PipelineStepView | null>(null);
   const labels: Record<string, string> = { start: '启动流水线', pause: '暂停', resume: '恢复', cancel: '取消流水线' };
   async function control(action: string) {
     if (!data) return;
@@ -83,7 +84,7 @@ function PipelineDetail({ id, bootstrap, onClose, onOpenItem, onChanged, notify 
   }
   const teamName = (teamId: string) => bootstrap.teams.find(team => team.id === teamId)?.name || teamId;
   const userName = (userId: string) => bootstrap.users.find(user => user.id === userId)?.name || userId;
-  return <>{!reassign && <Dialog title={data?.pipeline.title || '流水线详情'} subtitle={data ? `${data.template_version.definition.name} · v${data.template_version.version}` : undefined} onClose={onClose} wide><div className="modal-content">
+  return <>{!reassign && !rollback && <Dialog title={data?.pipeline.title || '流水线详情'} subtitle={data ? `${data.template_version.definition.name} · v${data.template_version.version}` : undefined} onClose={onClose} wide><div className="modal-content">
     <ErrorBanner error={error || actionError} onRetry={refresh} />{loading ? <Loading /> : data && <>
       <div className="pipeline-summary"><span className="subtle-badge">{pipelineLabels[data.pipeline.status]}</span><span>流程版本 {data.pipeline.version}</span><span>{bootstrap.projects.find(project => project.id === data.pipeline.project_id)?.name}</span></div>
       {data.pipeline.description && <p className="pre-line pipeline-description">{data.pipeline.description}</p>}
@@ -91,11 +92,17 @@ function PipelineDetail({ id, bootstrap, onClose, onOpenItem, onChanged, notify 
       <div className="workflow-actions pipeline-controls">{data.allowed_actions.map(action => <button key={action} className={`button button-small ${action === 'start' ? 'button-primary' : ''} ${action === 'cancel' ? 'danger-text' : ''}`} disabled={!!busy} onClick={() => void control(action)}>{labels[action]}</button>)}<button className="button button-small" onClick={refresh}><RefreshCw size={14} />刷新</button></div>
       <div className="pipeline-steps">{data.steps.map((step, index) => <article className={`pipeline-step ${step.state === 'completed' ? 'pipeline-step-complete' : ''}`} key={step.id}>
         <div className="pipeline-step-index">{index + 1}</div><div className="pipeline-step-body"><div className="pipeline-step-heading"><strong>{step.definition.name}</strong><span className="subtle-badge">{stepLabels[step.state] || step.state}</span></div><p>承接团队：{teamName(step.item?.pending_target_team_id || step.item?.owner_team_id || step.target_team_id)} · 验收人：{userName(step.reviewer_id)}{step.attempt && ` · 第 ${step.attempt.ordinal} 轮`}</p><p>必需材料：{step.definition.required_artifact_kinds.join('、')}</p>
-        {step.item && <div className="workflow-actions"><button className="text-button" onClick={() => onOpenItem(step.item!.id)}>{step.item.number} · 打开事项 <ArrowRight size={14} /></button>{step.state === 'declined' && data.allowed_actions.includes('cancel') && <button className="text-button" onClick={() => setReassign(step)}>重新指派团队</button>}</div>}
+        {step.item && <div className="workflow-actions"><button className="text-button" onClick={() => onOpenItem(step.item!.id)}>{step.item.number} · 打开事项 <ArrowRight size={14} /></button>{step.state === 'declined' && data.allowed_actions.includes('cancel') && <button className="text-button" onClick={() => setReassign(step)}>重新指派团队</button>}{data.can_rollback && <button className="text-button" onClick={() => setRollback(step)}>回退到此步骤</button>}</div>}
         {step.attempt?.input_snapshot.upstream_deliveries.map(source => <button className="text-button" key={source.delivery_id} onClick={() => onOpenItem(source.work_item_id)}>查看上一步交付：{source.summary}</button>)}
         </div></article>)}</div>
       <div className="info-note pipeline-footnote"><GitBranch size={16} />执行成功不会自动验收；每一步由指定账号核对当前交付。</div>
-    </>}</div></Dialog>}{reassign && data && <ReassignStep pipeline={data} step={reassign} bootstrap={bootstrap} onClose={() => setReassign(null)} onSaved={value => { setReassign(null); setData(value); onChanged(); notify('已向新团队发起接单请求。'); }} />}</>;
+    </>}</div></Dialog>}{reassign && data && <ReassignStep pipeline={data} step={reassign} bootstrap={bootstrap} onClose={() => setReassign(null)} onSaved={value => { setReassign(null); setData(value); onChanged(); notify('已向新团队发起接单请求。'); }} />}{rollback && data && <RollbackStep pipeline={data} step={rollback} onClose={() => setRollback(null)} onSaved={value => { setRollback(null); setData(value); onChanged(); notify('步骤已回退，受影响的历史材料已保留。'); }} />}</>;
+}
+
+function RollbackStep({ pipeline, step, onClose, onSaved }: { pipeline: PipelineView; step: PipelineStepView; onClose: () => void; onSaved: (value: PipelineView) => void }) {
+  const [reason, setReason] = useState(''); const [error, setError] = useState<unknown>(null); const [busy, setBusy] = useState(false);
+  async function submit(event: FormEvent) { event.preventDefault(); setBusy(true); setError(null); try { onSaved(await write<PipelineView>(`/pipelines/${pipeline.pipeline.id}/steps/${encodeURIComponent(step.step_key)}/rollback`, { expected_version: pipeline.pipeline.version, reason: reason.trim() })); } catch (cause) { setError(cause); } finally { setBusy(false); } }
+  return <Dialog title="回退流水线步骤" subtitle={step.definition.name} onClose={onClose}><form className="modal-form" onSubmit={submit}><ErrorBanner error={error} /><div className="info-note">该步骤和依赖它的后续步骤将重新执行，历史交付会保留。受影响的 Agent 执行须先确认结束。</div><Field label="回退原因" required><textarea required rows={3} value={reason} onChange={event => setReason(event.target.value)} /></Field><footer className="modal-actions"><button type="button" className="button" onClick={onClose} disabled={busy}>取消</button><button className="button button-primary" disabled={busy}>确认回退</button></footer></form></Dialog>;
 }
 
 function ReassignStep({ pipeline, step, bootstrap, onClose, onSaved }: { pipeline: PipelineView; step: PipelineStepView; bootstrap: Bootstrap; onClose: () => void; onSaved: (value: PipelineView) => void }) {

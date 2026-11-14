@@ -8,11 +8,11 @@
 | --- | --- | --- | --- |
 | HTTP 客户端 `@agent-team-hub/client` | 台账、交付、审核、附件上传、绑定、Run、能力版本与组工具集 | Node 24 测试；异常、版本冲突、幂等请求转发 | 实际网络与正式成员权限配置 |
 | CLI `@agent-team-hub/cli` | JSON 输入输出、离线进度队列、固定版本安装与显式脚本执行 | 子进程 → HTTP 测试、安装路径与执行测试 | Windows 路径、Python 安装位置 |
-| 官方 Python MCP SDK | 48 个工具；stdio；协作、串行流水线、文本交付验收、能力发布、团队工具集与协议发现 | 官方 `ClientSession` → stdio → 真实 Hub；双身份业务和三身份跨组串行流程闭环 | 宿主权限与真实会话 ID 获取 |
-| DSH bundle `dsh-team-hub` | 23 个 `teamhub_*` 原生工具；流程关联、AdapterRegistry 与跨语言适配器 | 0.3.0 在 Windows rc.1 隔离及本机正式 profile 验证 | 0.3.0 在 rc.2 和其他目标 profile 的验证 |
-| DSH 待办看板自动联动 | 可选 Cordis 看板服务、稳定外部键关联、状态投影与掉线提示 | 真实 `dsh-todo-kanban`、DSH rc.1、Hub 和浏览器的隔离闭环；本机正式 profile 验证旧关联 | 其他目标 profile 更新、重启和正式数据备份 |
-| 增强 Superagent 自动启动 | 可选执行适配器、固定目录核验、单次派发、本机持久记录与状态核对 | 本机管理 API 只读探测；隔离环境连接真实管理路由和领域引擎，执行器为测试替身 | 真实派发尚未验证；停止回执不证明执行已停止，丢失句柄不可按 ID 找回；不支持自动安装固定工具版本 |
-| 其他 agent harness | 专用配置生成、MCP/CLI、显式 session 绑定与 Run 回传 | 通用业务测试及真实客户端检查，见[宿主验证记录](../docs/harness-host-verification.md) | 各宿主自动启动/取消/看板仍需专用适配 |
+| 官方 Python MCP SDK | stdio；协作、并行流水线、回退、文本交付验收、能力发布、团队工具集与协议发现 | 官方 `ClientSession` → stdio → 真实 Hub；双身份和跨组流程测试 | 宿主权限与真实会话 ID 获取 |
+| DSH bundle `dsh-team-hub` | 25 个 `teamhub_*` 原生工具；流程关联、自动派发、AdapterRegistry 与跨语言适配器 | Windows rc.1 隔离 profile 与本机真实 Superagent 验证 | 其他 DSH 版本与目标 profile 的验证 |
+| DSH 待办看板双向联动 | 稳定外部键、状态对账、显式业务命令与掉线提示 | 真实 `dsh-todo-kanban`、DSH rc.1、Hub 和浏览器的隔离跨组闭环 | 其他目标 profile 更新、重启和正式数据备份 |
+| 增强 Superagent 自动启动 | 固定目录核验、单次派发、本机持久记录与状态核对 | 真实本机只读模型任务；模拟响应丢失后找回同一工单并完成两组并行汇合 | 停止回执不证明执行已停止；不支持自动安装固定工具版本；找回依赖当前宿主触发键算法 |
+| 其他 agent harness | 专用配置生成、MCP/CLI、session 绑定；Codex/Claude Code 本机执行器 | Codex 和 Claude Code 的真实只读任务及恢复均已验证 | OpenCode 自动执行与其他宿主需专用适配，取消不确认整个进程树 |
 | 通用本机适配器协议 v1 | 看板和执行器能力发现、跨语言 JSON-RPC stdio、独立订阅和安全恢复 | Python 参考看板及模拟执行器通过真实 Hub、MCP、CLI 的跨组闭环 | 每种实际第三方宿主仍需实现并验证自己的适配器 |
 | 共享工具库 | Skill/脚本样例、不可变版本、宿主 Skill 安装目录、工具集引用 | 三种目录实际写文件；样例脚本可运行；安装不执行代码 | MCP/plugin/workflow/app 类型目前为目录与 manifest；既有宿主会话的 Skill 加载需确认 |
 

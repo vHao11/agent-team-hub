@@ -367,6 +367,12 @@ def build_server(url: str | None = None, token: str | None = None,
                              command(operation_id, expected_version, target_team_id=target_team_id, reason=reason))
 
     @server.tool(annotations=writes)
+    async def pipeline_rollback(pipeline_id: str, step_key: str, operation_id: str, expected_version: int, reason: str) -> dict:
+        """回退已激活步骤及依赖它的后续步骤，保留历史证据；受影响的执行必须先确认结束。"""
+        return await request("POST", f"/pipelines/{quote(pipeline_id, safe='')}/steps/{quote(step_key, safe='')}/rollback",
+                             command(operation_id, expected_version, reason=reason))
+
+    @server.tool(annotations=writes)
     async def pipeline_step_command(work_item_id: str, operation_id: str, expected_version: int,
                                     pipeline_attempt_id: str, pipeline_generation: int,
                                     action: Literal['accept', 'decline', 'start', 'progress', 'spec', 'transfer-requests', 'accept-transfer'],

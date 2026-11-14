@@ -194,7 +194,7 @@ class Hub:
                 actions = [action for action in actions if action not in ("cancel", "dependencies")]
                 if context["pipeline_status"] == "paused":
                     actions = [action for action in actions if action not in ("start", "run", "runs")]
-                if context["pipeline_status"] not in ("active", "paused"):
+                if not context["current"] or context["pipeline_status"] not in ("active", "paused"):
                     actions = []
             return {
                 "item": item, "allowed_actions": actions, "pipeline_context": context,

@@ -1,5 +1,5 @@
 /** Tool shape follows DSH docs/user/develop/basic/tool.md at 0.2.2-rc.2. */
-export function createToolDefinitions(defineTool, client, bridge, registry, boardSync = null, boardSyncFor = () => boardSync) {
+export function createToolDefinitions(defineTool, client, bridge, registry, boardSync = null, boardSyncFor = () => boardSync, autoDispatch = null) {
   const str = (description, required = true) => ({ type: 'string', ...(required ? { required: true } : {}), description });
   const num = (description, required = true) => ({ type: 'integer', ...(required ? { required: true } : {}), description });
   const item = { work_item_id: str('共享事项 ID。先通过查询获取，不使用标题或本地数组下标。') };
@@ -18,10 +18,14 @@ export function createToolDefinitions(defineTool, client, bridge, registry, boar
     make('status', '读取当前 Hub 身份和本机桥接能力。没有适配器时 available=false；不能声称已接通看板或 Superagent。', {}, async () => ({
       context: await client.bootstrap(), client_instance_id: await bridge.instance(), adapters: await registry.probe(),
       ...(boardSync ? { board_sync: boardSync.lastResult } : {}),
+      ...(autoDispatch ? { automation: autoDispatch.lastResult } : {}),
     })),
     make('integration_contract', '读取 Hub 通用接入协议版本与业务语义；不代表某个宿主适配器已经安装。', {}, () => client.integrationContract()),
     make('pipeline_list', '列出 Hub 流水线及步骤；只读取。', {}, () => client.listPipelines()),
     make('pipeline_get', '读取流水线步骤、当前轮次和关联事项。', { pipeline_id: str('Hub 流水线 ID。') }, args => client.getPipeline(args.pipeline_id)),
+    make('pipeline_rollback', '回退指定步骤及依赖它的后续步骤；保留历史交付，受影响的运行必须先确认结束。', {
+      pipeline_id: str('Hub 流水线 ID。'), step_key: str('要回退到的步骤标识。'), ...operation, ...version, reason: str('回退原因。'),
+    }, args => client.rollbackPipeline(args.pipeline_id, args.step_key, { operation_id: args.operation_id, expected_version: args.expected_version, reason: args.reason })),
     make('pipeline_link', '把流水线关联到所选本机看板适配器；步骤激活后自动创建或复用卡片并同步业务状态。不会派单。', {
       pipeline_id: str('Hub 流水线 ID。'), workspace_ref: str('本机工作区定位字符串。'),
       work_item_id: str('可选：要关联已有草稿的流程事项 ID。', false), draft_id: str('可选：对应的已有看板草稿 ID。', false),
@@ -31,6 +35,17 @@ export function createToolDefinitions(defineTool, client, bridge, registry, boar
     make('pipeline_unlink', '停止同步并移除该流程的 Hub 关联字段；保留看板本地草稿及其他本地内容。', {
       pipeline_id: str('已关联的 Hub 流水线 ID。'), adapter: str('可选看板适配器名称。', false),
     }, args => boardSyncFor(args.adapter).unsubscribe(args.pipeline_id)),
+    ...(autoDispatch ? [make('pipeline_automation', '为当前成员显式启用或关闭单个流程的本机自动执行；只自动接收明确指定给本人的步骤，不自动验收。', {
+      action: str('enable、disable、status 或 tick。'), pipeline_id: str('流程 ID；enable 和 disable 必填。', false),
+      adapter: str('enable 时使用的执行器名称。', false), workspace_ref: str('enable 时执行器实际使用的工作区。', false),
+      auto_accept: { type: 'boolean', description: '仅自动接单给当前成员的预指定步骤。' },
+    }, args => {
+      if (args.action === 'enable') return autoDispatch.enable(args);
+      if (args.action === 'disable') return autoDispatch.disable(args.pipeline_id);
+      if (args.action === 'status') return autoDispatch.lastResult;
+      if (args.action === 'tick') return autoDispatch.tick();
+      throw new Error('不支持的自动执行操作');
+    })] : []),
     make('ledger_search', '查询共享跨组事项。只读取，不接单、不启动 Agent。', {
       view: str('all、mine、requested、review 或 inbox。', false), q: str('搜索词。', false), status: str('状态筛选。', false),
     }, args => client.listItems(args)),

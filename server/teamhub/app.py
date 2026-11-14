@@ -167,6 +167,10 @@ def create_app(data_dir: str | Path = '.teamhub', demo: bool = False) -> FastAPI
     def reassign_pipeline_step(identifier: str, step_key: str, body: s.PipelineReassign, actor: Actor):
         return hub.workflows.reassign(actor, identifier, step_key, payload(body))
 
+    @app.post(base + '/pipelines/{identifier}/steps/{step_key}/rollback', tags=['Pipelines'])
+    def rollback_pipeline_step(identifier: str, step_key: str, body: s.PipelineRollback, actor: Actor):
+        return hub.workflows.rollback(actor, identifier, step_key, payload(body))
+
     @app.post(base + '/pipelines/{identifier}/{action}', tags=['Pipelines'])
     def pipeline_control(identifier: str, action: Literal['start', 'pause', 'resume', 'cancel'], body: s.Versioned, actor: Actor):
         return hub.workflows.control(actor, identifier, action, payload(body))
