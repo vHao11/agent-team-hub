@@ -1,0 +1,146 @@
+/** 在隔离的真实 DSH、看板和 Hub 中验证跨组流程；不调用模型。 */
+import assert from 'node:assert/strict';
+import { createRequire } from 'node:module';
+import { randomUUID } from 'node:crypto';
+import { pathToFileURL } from 'node:url';
+import path from 'node:path';
+import { HubClient } from '../packages/client/src/index.mjs';
+
+const require = createRequire(path.join(process.env.DSH_SMOKE_RUNTIME_DIR, 'package.json'));
+const { runProfile } = await import(pathToFileURL(require.resolve('@deepseek-ai/dsh/profile-boot')));
+const dshRequire = createRequire(path.join(process.env.DSH_SMOKE_RUNTIME_DIR, 'node_modules/@deepseek-ai/dsh/package.json'));
+const { createLaunchEnvironmentSnapshot } = await import(pathToFileURL(dshRequire.resolve('@deepseek-ai/dsh-launch-environment')));
+const { chromium } = await import(pathToFileURL(process.env.TEAMHUB_PLAYWRIGHT_ENTRY));
+const environment = createLaunchEnvironmentSnapshot([{ source: 'process', values: { ...process.env } }]);
+const runtime = await runProfile({ environment, profile: 'web', patchFiles: [],
+  args: ['--host', '127.0.0.1', '--port', process.env.DSH_SMOKE_PORT, '--no-open'] });
+const baseUrl = `http://127.0.0.1:${process.env.DSH_SMOKE_PORT}`;
+const lin = new HubClient({ url: process.env.TEAMHUB_URL, token: 'demo-lin' });
+const chen = new HubClient({ url: process.env.TEAMHUB_URL, token: 'demo-chen' });
+const xu = new HubClient({ url: process.env.TEAMHUB_URL, token: 'demo-xu' });
+const op = () => `dsh-board-${randomUUID()}`;
+const errors = [];
+const definitions = {
+  roles: [{ key: 'build', label: '实施组', kind: 'team' }, { key: 'test', label: '验证组', kind: 'team' },
+    { key: 'review', label: '验收人', kind: 'reviewer' }],
+  steps: [{ key: 'build', name: '实施', team_role: 'build', reviewer_role: 'review', acceptance_spec: ['提交说明'], required_artifact_kinds: ['document'] },
+    { key: 'test', name: '验证', team_role: 'test', reviewer_role: 'review', acceptance_spec: ['提交报告'], required_artifact_kinds: ['document'] }],
+};
+let browser, page;
+try {
+  assert.equal(runtime.ctx.get('todoKanbanHub')?.apiVersion, 1, '看板 Cordis 服务未加载');
+  const status = JSON.parse(await runtime.ctx.tools.get('teamhub_status').execute({}));
+  assert.equal(status.adapters.boards.find(value => value.name === 'dsh-todo-kanban')?.available, true);
+  const template = await lin.request('POST', '/workflow-templates', { operation_id: op(), name: '隔离测试模板', definition: definitions });
+  const version = await lin.request('POST', `/workflow-templates/${template.id}/publish`, { operation_id: op(), expected_revision: template.draft_revision });
+  let view = await lin.request('POST', '/pipelines', { operation_id: op(), title: '隔离跨组流水线', project_id: 'proj-interface',
+    template_version_id: version.id, role_bindings: { build: 'team-clearing', test: 'team-qa', review: 'u-lin' } });
+  const pipelineId = view.pipeline.id;
+  view = await lin.request('POST', `/pipelines/${pipelineId}/start`, { operation_id: op(), expected_version: view.pipeline.version });
+  const link = runtime.ctx.tools.get('teamhub_pipeline_link');
+  const sync = runtime.ctx.tools.get('teamhub_pipeline_sync');
+  const linked = JSON.parse(await link.execute({ pipeline_id: pipelineId, workspace_ref: 'isolated-workspace' }));
+  assert.equal(linked.synced, true, JSON.stringify(linked));
+  const firstId = linked.cards[0].local_todo_id;
+  const repeated = JSON.parse(await link.execute({ pipeline_id: pipelineId, workspace_ref: 'isolated-workspace' }));
+  assert.equal(repeated.cards[0].local_todo_id, firstId);
+
+  browser = await chromium.launch({ headless: true, executablePath: process.env.TEAMHUB_CHROME });
+  page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+  page.on('pageerror', error => errors.push(`pageerror: ${error.message}`));
+  page.on('console', message => { if (message.type() === 'error') errors.push(`console: ${message.text()}`); });
+  const login = runtime.ctx.get('connection').authenticatedUrl(baseUrl + '/');
+  await page.goto(login, { waitUntil: 'domcontentloaded' });
+  const board = async () => page.evaluate(async () => {
+    const response = await fetch('/todo-kanban/api/board', { credentials: 'same-origin' });
+    if (!response.ok) throw new Error(`board HTTP ${response.status}`);
+    return response.json();
+  });
+  const cardIn = async (column, id) => (await board()).columns[column].find(card => card.id === id);
+  assert.equal((await cardIn('todo', firstId)).hub.status, 'open');
+  await runtime.ctx.get('todoKanbanHub').setSyncStatus('offline');
+  assert.equal((await board()).hubSync.state, 'offline');
+  await sync.execute({});
+  assert.equal((await board()).hubSync.state, 'synced');
+
+  const context = step => ({ pipeline_attempt_id: step.attempt.id, pipeline_generation: view.pipeline.generation });
+  const refresh = async () => { view = await lin.getPipeline(pipelineId); };
+  const command = async (client, step, action) => client.command(step.item.id, action, {
+    operation_id: op(), expected_version: step.item.version, ...context(step),
+  });
+  await command(chen, view.steps[0], 'accept'); await refresh();
+  await command(chen, view.steps[0], 'start'); await refresh();
+  // 不手动同步，验证宿主定时器自行把处理中状态投影到看板。
+  const deadline = Date.now() + 20000;
+  while (!(await cardIn('doing', firstId)) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 400));
+  assert.equal((await cardIn('doing', firstId))?.hub.status, 'active', '自动状态同步未完成');
+  async function deliver(client, step, label) {
+    return client.submitDelivery(step.item.id, { operation_id: op(), expected_version: step.item.version,
+      spec_revision: step.item.spec_revision, summary: label, artifacts: [{ label: '说明', url: 'https://example.com/evidence', kind: 'document' }], ...context(step) });
+  }
+  let delivery = await deliver(chen, view.steps[0], '第一版'); await refresh();
+  await sync.execute({}); assert.equal((await cardIn('person', firstId)).hub.status, 'review');
+  await lin.reviewDelivery(delivery.id, { operation_id: op(), expected_version: view.steps[0].item.version,
+    decision: 'request_changes', reason: '补充说明', ...context(view.steps[0]) });
+  await refresh(); await sync.execute({});
+  assert.equal((await cardIn('doing', firstId)).hub.attemptId, view.steps[0].attempt.id);
+  delivery = await deliver(chen, view.steps[0], '补充后'); await refresh();
+  await lin.reviewDelivery(delivery.id, { operation_id: op(), expected_version: view.steps[0].item.version,
+    decision: 'approve', ...context(view.steps[0]) });
+  await refresh();
+  const afterApprove = JSON.parse(await sync.execute({}));
+  const secondId = afterApprove.find(value => value.pipeline_id === pipelineId).cards.find(value => value.work_item_id === view.steps[1].item.id).local_todo_id;
+  assert.equal((await cardIn('done', firstId)).hub.status, 'done');
+  assert.equal((await cardIn('todo', secondId)).hub.status, 'open');
+  await command(xu, view.steps[1], 'accept'); await refresh();
+  await command(xu, view.steps[1], 'start'); await refresh();
+  delivery = await deliver(xu, view.steps[1], '验证结果'); await refresh();
+  await lin.reviewDelivery(delivery.id, { operation_id: op(), expected_version: view.steps[1].item.version,
+    decision: 'approve', ...context(view.steps[1]) });
+  await refresh(); await sync.execute({});
+  assert.equal(view.pipeline.status, 'completed');
+  assert.equal((await cardIn('done', secondId)).hub.status, 'done');
+  const boardSnapshot = await board();
+  const cards = Object.values(boardSnapshot.columns).flat().filter(card => card.hub?.pipelineId === pipelineId);
+  assert.equal(cards.length, 2); assert.equal(new Set(cards.map(card => card.id)).size, 2);
+  assert.ok((await lin.getItem(view.steps[0].item.id)).bindings.some(binding => binding.local_todo_id === firstId));
+  assert.ok((await lin.getItem(view.steps[1].item.id)).bindings.some(binding => binding.local_todo_id === secondId));
+
+  // 真实 DSH 页面：类别切换后可看到 Hub 状态，不显示该草稿的派单或删除按钮。
+  const previewContinue = page.getByRole('button', { name: '继续', exact: true });
+  if (await previewContinue.isVisible().catch(() => false)) await previewContinue.click();
+  for (let attempt = 0; attempt < 3 && await page.locator('[role="dialog"]').count(); attempt++) {
+    const close = page.locator('[role="dialog"] button[aria-label="关闭"]').first();
+    if (await close.count()) await close.click();
+    else await page.keyboard.press('Escape');
+    await page.waitForTimeout(250);
+  }
+  await page.getByText('待办看板', { exact: true }).first().click();
+  await page.locator('.tk-overview').waitFor({ timeout: 25000 });
+  await page.locator('.tk-tile[data-status="done"]').first().click();
+  const visible = page.locator('.tk-card').filter({ hasText: '隔离跨组流水线' });
+  await visible.first().waitFor();
+  assert.equal(await visible.count(), 2);
+  assert.equal(await visible.first().getByText('Hub：已验收').count(), 1);
+  assert.equal(await visible.first().getByRole('button', { name: '派单', exact: true }).count(), 0);
+  assert.equal(await visible.first().getByRole('button', { name: '删除', exact: true }).count(), 0);
+  await visible.first().scrollIntoViewIfNeeded();
+  await page.waitForTimeout(600);
+  await page.screenshot({ path: path.join(process.env.TEAMHUB_EVIDENCE_DIR, 'dsh-board-desktop.png') });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(400);
+  await visible.first().scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(process.env.TEAMHUB_EVIDENCE_DIR, 'dsh-board-mobile.png') });
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
+  assert.deepEqual(errors, []);
+  console.log('TEAMHUB_DSH_BOARD=' + JSON.stringify({ status: 'passed', adapter: 'todoKanbanHub', teams: 2, members: 3,
+    cards: cards.length, automatic_sync: true, rework: true, duplicate_link: false, pipeline_status: view.pipeline.status,
+    dsh_viewports: ['1440x900', '390x844'], browser_errors: errors.length }));
+} catch (error) {
+  if (page) await page.screenshot({ path: path.join(process.env.TEAMHUB_EVIDENCE_DIR, 'dsh-board-failure.png') }).catch(() => {});
+  throw error;
+} finally {
+  if (browser) await browser.close();
+  await runtime.shutdown.shutdown(0);
+}

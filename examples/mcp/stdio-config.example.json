@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "agent-team-hub": {
+      "command": "D:\\path\\agent-team-hub\\.venv\\Scripts\\python.exe",
+      "args": [
+        "-m",
+        "teamhub.mcp_server",
+        "--connection-file",
+        "D:\\path\\private\\teamhub-connection.json"
+      ]
+    }
+  }
+}

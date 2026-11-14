@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "clearing/log-summary",
+  "name": "log-summary",
+  "kind": "script",
+  "version": "0.1.0",
+  "title": "联调日志摘要",
+  "entry": "summarize.py",
+  "runtime": "python",
+  "requirements": {"python": ">=3.10"},
+  "inputs": {"file": "absolute_path", "format": "jsonl"},
+  "outputs": {"summary": "json"}
+}

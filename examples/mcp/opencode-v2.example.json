@@ -1,0 +1,19 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "agent-team-hub": {
+        "type": "local",
+        "command": [
+          "D:\\path\\agent-team-hub\\.venv\\Scripts\\python.exe",
+          "-m",
+          "teamhub.mcp_server"
+        ],
+        "environment": {
+          "TEAMHUB_URL": "http://127.0.0.1:8765",
+          "TEAMHUB_TOKEN": "{env:TEAMHUB_TOKEN}"
+        }
+      }
+    }
+  }
+}

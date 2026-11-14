@@ -1,0 +1,4 @@
+{"level":"INFO","event":"order.accepted","message":"sample order accepted"}
+{"level":"INFO","event":"order.report","message":"sample execution report"}
+{"level":"WARN","event":"reconnect","message":"sample retry"}
+{"level":"ERROR","event":"decode.failed","message":"sample unknown field"}

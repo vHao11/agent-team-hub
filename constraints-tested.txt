@@ -1,0 +1,11 @@
+# Versions used for this release's Python validation (Python 3.12.14 / Linux).
+# These are constraints for direct runtime dependencies, not a platform-wide lock.
+fastapi==0.141.1
+uvicorn==0.52.1
+SQLAlchemy==2.0.57
+pydantic==2.13.4
+python-multipart==0.0.32
+httpx==0.28.1
+mcp==1.29.0
+pytest==9.2.0
+python-dotenv==1.2.2

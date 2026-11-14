@@ -1,0 +1,5 @@
+- insert:
+    - id: team-hub
+      name: dsh-team-hub
+      config:
+        tokenEnv: TEAMHUB_TOKEN

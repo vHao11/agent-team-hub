@@ -1,0 +1,47 @@
+name: verify
+on:
+  push:
+  pull_request:
+jobs:
+  backend:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ['3.11', '3.12']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: python -m pip install -c constraints-tested.txt -e ".[mcp,dev]"
+      - run: python -m pytest tests packages/mcp/test_mcp.py
+  web-and-adapters:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            packages/dsh-plugin/package-lock.json
+      - run: npm ci && npm run build
+        working-directory: web
+      - run: node --test packages/client/test/*.test.mjs packages/cli/test/*.test.mjs
+      - run: npm ci && npm test && npm pack
+        working-directory: packages/dsh-plugin
+  live-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: python -m pip install -c constraints-tested.txt -e ".[mcp,dev]"
+      - run: node packages/cli/build.mjs
+      - run: python -m pytest packages/integration

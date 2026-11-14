@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "id": "trading/interface-review",
+  "name": "interface-review",
+  "kind": "skill",
+  "version": "0.1.0",
+  "title": "交易接口变更分析",
+  "entry": "SKILL.md",
+  "requirements": {"features": ["files.read", "shell.exec"]},
+  "inputs": {"change_document": "file_ref", "code_workspace": "workspace_ref"},
+  "outputs": {"impact_report": "artifact_ref"},
+  "bindings": {"dsh": {"mode": "skill"}, "generic_skill": {"mode": "skill_cli"}}
+}

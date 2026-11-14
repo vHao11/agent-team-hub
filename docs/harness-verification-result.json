@@ -1,0 +1,31 @@
+{
+  "platform": "Linux",
+  "model_calls": 0,
+  "existing_profiles_modified": false,
+  "hub_data": "isolated demo workspace",
+  "results": [
+    {
+      "host": "claude-code",
+      "version": "2.1.323 (Claude Code)",
+      "config": "passed",
+      "mcp_connection": "passed",
+      "tool_call": "not_checked_by_host_cli"
+    },
+    {
+      "host": "opencode-v2",
+      "version": "opencode v2.2.7",
+      "config": "passed",
+      "mcp_connection": "passed",
+      "status_attempts": 4,
+      "tool_call": "not_checked_by_host_cli"
+    },
+    {
+      "host": "codex",
+      "version": "codex-cli 0.167.0-alpha.4",
+      "config": "passed",
+      "mcp_connection": "passed",
+      "discovered_tools": 30,
+      "tool_call": "not_requested"
+    }
+  ]
+}

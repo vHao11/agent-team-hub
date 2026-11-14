@@ -1,0 +1,7 @@
+[mcp_servers.agent-team-hub]
+command = "D:\\path\\agent-team-hub\\.venv\\Scripts\\python.exe"
+args = ["-m", "teamhub.mcp_server"]
+env_vars = ["TEAMHUB_TOKEN"]
+
+[mcp_servers.agent-team-hub.env]
+TEAMHUB_URL = "http://127.0.0.1:8765"
