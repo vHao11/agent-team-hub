@@ -5,6 +5,18 @@
   "oneOf": [{ "$ref": "#/$defs/request" }, { "$ref": "#/$defs/response" }],
   "$defs": {
     "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "installed_capability": {
+      "type": "object",
+      "required": ["capability_id", "release_id", "version", "kind", "slug", "directory", "entry", "manifest_sha256", "files"],
+      "properties": {
+        "capability_id": { "$ref": "#/$defs/id" }, "release_id": { "$ref": "#/$defs/id" },
+        "version": { "type": "string", "minLength": 1 }, "kind": { "enum": ["skill", "script", "mcp", "plugin", "workflow", "app"] },
+        "slug": { "type": "string", "minLength": 1 }, "directory": { "type": "string", "minLength": 1 },
+        "entry": { "type": ["string", "null"] }, "manifest_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "files": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "type": "object", "required": ["path", "sha256"],
+          "properties": { "path": { "type": "string", "minLength": 1 }, "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } } } }
+      }
+    },
     "handle": {
       "type": "object",
       "properties": { "run_id": { "$ref": "#/$defs/id" }, "session_id": { "$ref": "#/$defs/id" }, "status": { "enum": ["queued", "starting", "running", "waiting_input"] } },
@@ -41,7 +53,7 @@
         } } } },
         { "if": { "properties": { "method": { "const": "execution.start" } } }, "then": { "properties": { "params": {
           "required": ["item_id", "run_id", "dispatch_id", "workspace_ref", "input_snapshot", "capability_releases", "spec_revision", "assignment_generation"],
-          "properties": { "item_id": { "$ref": "#/$defs/id" }, "run_id": { "$ref": "#/$defs/id" }, "dispatch_id": { "$ref": "#/$defs/id" }, "workspace_ref": { "type": "string", "minLength": 1 }, "input_snapshot": { "type": "object" }, "capability_releases": { "type": "array" }, "spec_revision": { "type": "integer", "minimum": 1 }, "assignment_generation": { "type": "integer", "minimum": 1 } }
+          "properties": { "item_id": { "$ref": "#/$defs/id" }, "run_id": { "$ref": "#/$defs/id" }, "dispatch_id": { "$ref": "#/$defs/id" }, "workspace_ref": { "type": "string", "minLength": 1 }, "input_snapshot": { "type": "object" }, "capability_releases": { "type": "array" }, "installed_capabilities": { "type": "array", "items": { "$ref": "#/$defs/installed_capability" } }, "spec_revision": { "type": "integer", "minimum": 1 }, "assignment_generation": { "type": "integer", "minimum": 1 } }
         } } } },
         { "if": { "properties": { "method": { "enum": ["execution.status", "execution.cancel"] } } }, "then": { "properties": { "params": { "required": ["handle"], "properties": { "handle": { "$ref": "#/$defs/handle" } } } } } },
         { "if": { "properties": { "method": { "const": "execution.find" } } }, "then": { "properties": { "params": { "required": ["dispatch_id"], "properties": { "dispatch_id": { "$ref": "#/$defs/id" } } } } } }

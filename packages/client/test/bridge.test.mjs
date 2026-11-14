@@ -111,6 +111,47 @@ test('a confirmed pre-launch refusal marks the reserved run failed without start
   assert.equal((await f.client.getRun()).status, 'failed');
 });
 
+test('an opted-in executor receives the exact installed release before launch', async t => {
+  let installed;
+  const f = await fixture(t, { async probe() { return { available: true, canInstallCapabilities: true }; },
+    async start(input) { installed = input.installed_capabilities; return { run_id: 'host-run' }; },
+    async getStatus() { return { status: 'succeeded' }; } });
+  f.client.getCapability = async () => ({ id: 'cap-1', kind: 'skill', slug: 'example' });
+  f.client.getRelease = async () => ({ id: 'release-1', capability_id: 'cap-1', version: '0.1.0',
+    manifest: { kind: 'skill', entry: 'SKILL.md' }, files: { 'SKILL.md': '固定版本内容' } });
+  await f.bridge.start('work-1', { ...f.input, workspace_ref: f.dir });
+  assert.equal(installed[0].release_id, 'release-1');
+  assert.equal(await fs.readFile(path.join(installed[0].directory, 'SKILL.md'), 'utf8'), '固定版本内容');
+});
+
+test('a cancellation observed while installing prevents the host from starting', async t => {
+  let starts = 0;
+  const f = await fixture(t, { async probe() { return { available: true, canInstallCapabilities: true }; },
+    async start() { starts++; return { run_id: 'host-run' }; }, async getStatus() { return { status: 'running' }; } });
+  f.client.getCapability = async () => ({ id: 'cap-1', kind: 'skill', slug: 'example' });
+  f.client.getRelease = async () => ({ id: 'release-1', capability_id: 'cap-1', version: '0.1.0',
+    manifest: { kind: 'skill', entry: 'SKILL.md' }, files: { 'SKILL.md': '固定版本内容' } });
+  const getRun = f.client.getRun;
+  f.client.getRun = async () => ({ ...await getRun(), status: 'cancel_requested' });
+  const result = await f.bridge.start('work-1', { ...f.input, workspace_ref: f.dir });
+  assert.equal(result.cancelled_before_start, true);
+  assert.equal(result.run.status, 'cancelled');
+  assert.equal(starts, 0);
+});
+
+test('a Hub read failure before host start is a known pre-launch refusal', async t => {
+  let starts = 0;
+  const f = await fixture(t, { async probe() { return { available: true, canInstallCapabilities: true }; },
+    async start() { starts++; return { run_id: 'host-run' }; }, async getStatus() { return { status: 'running' }; } });
+  f.client.getCapability = async () => ({ id: 'cap-1', kind: 'skill', slug: 'example' });
+  f.client.getRelease = async () => ({ id: 'release-1', capability_id: 'cap-1', version: '0.1.0',
+    manifest: { kind: 'skill', entry: 'SKILL.md' }, files: { 'SKILL.md': 'fixed' } });
+  f.client.getRun = async () => { throw new Error('network unavailable'); };
+  await assert.rejects(f.bridge.start('work-1', { ...f.input, workspace_ref: f.dir }), { code: 'ADAPTER_PRECONDITION_FAILED' });
+  assert.equal(starts, 0);
+  assert.equal(f.calls.find(call => call.type === 'report')?.data.status, 'failed');
+});
+
 test('maximum-length operation IDs still allow follow-up execution reports', async t => {
   const f = await fixture(t, { async probe() { return { available: true }; },
     async start() { return { run_id: 'host-run' }; }, async getStatus() { return { status: 'running' }; } });

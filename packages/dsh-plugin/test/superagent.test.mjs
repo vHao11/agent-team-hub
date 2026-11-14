@@ -6,6 +6,7 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DshSuperagentAdapter } from '../lib/superagent-adapter.mjs';
+import { prepareRuntimeCapabilities } from '../../client/src/runtime-capabilities.mjs';
 
 test('Superagent adapter uses the management API and never treats stop acknowledgement as confirmation', async t => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'teamhub-superagent-'));
@@ -59,4 +60,36 @@ test('Superagent adapter refuses non-loopback and credential-bearing addresses',
   for (const url of ['https://example.com', 'http://127.0.0.1:3080/path', 'http://user:pass@127.0.0.1:3080']) {
     assert.throws(() => new DshSuperagentAdapter({ url }), { code: 'INVALID_SUPERAGENT_URL' });
   }
+});
+
+test('Superagent receives verified fixed entry content and refuses oversized snapshots before creating a ticket', async t => {
+  const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'teamhub-superagent-pinned-'));
+  assert.ok(path.resolve(workspace).startsWith(path.resolve(os.tmpdir()) + path.sep));
+  t.after(() => fs.rm(workspace, { recursive: true, force: true }));
+  let posts = 0, posted;
+  const server = createServer(async (req, res) => {
+    let raw = ''; for await (const chunk of req) raw += chunk;
+    let result;
+    if (req.url === '/orchestrator/api/settings') result = { blocks: { executor: { value: { directoryMode: 'fixed' } } }, environment: { root: workspace } };
+    else if (req.url === '/orchestrator/api/tasks') { posts++; posted = JSON.parse(raw); result = { ticketId: 'pinned-ticket', ticket: { stage: 'working', directory: workspace } }; }
+    else { res.writeHead(404); res.end(); return; }
+    res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(result));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const adapter = new DshSuperagentAdapter({ url: `http://127.0.0.1:${server.address().port}` });
+  const pin = { capability_id: 'cap-pinned', release_id: 'rel-pinned', version: '1.0.0' };
+  let text = '固定入口内容';
+  const client = { async getCapability() { return { id: pin.capability_id, kind: 'skill', slug: 'test' }; },
+    async getRelease() { return { id: pin.release_id, capability_id: pin.capability_id, version: pin.version,
+      manifest: { kind: 'skill', entry: 'SKILL.md' }, files: { 'SKILL.md': text } }; } };
+  const installed = await prepareRuntimeCapabilities(client, workspace, 'dispatch-fixed', [pin]);
+  const input = { item_id: 'item', run_id: 'run', dispatch_id: 'dispatch-fixed', workspace_ref: workspace,
+    input_snapshot: { title: '固定技能' }, capability_releases: [pin], installed_capabilities: installed, spec_revision: 1, assignment_generation: 1 };
+  await adapter.start(input);
+  assert.match(posted.request, /固定入口内容/); assert.equal(posts, 1);
+  text = 'A'.repeat(21000);
+  const oversized = await prepareRuntimeCapabilities(client, workspace, 'dispatch-large', [pin]);
+  await assert.rejects(adapter.start({ ...input, dispatch_id: 'dispatch-large', installed_capabilities: oversized }), { code: 'ADAPTER_PRECONDITION_FAILED' });
+  assert.equal(posts, 1);
 });

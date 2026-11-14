@@ -16,6 +16,14 @@
       "args": ["<cli-executor.mjs 的绝对路径>", "local-claude", "claude", "<Claude 程序的绝对路径>", "<允许的工作区绝对路径>", "<Claude 状态目录的绝对路径>", "read-only"],
       "env": ["CLAUDE_CONFIG_DIR", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY"],
       "timeout_ms": 20000
+    },
+    {
+      "name": "local-opencode",
+      "kind": "executor",
+      "command": "node",
+      "args": ["<cli-executor.mjs 的绝对路径>", "local-opencode", "opencode", "<OpenCode 程序的绝对路径>", "<允许的工作区绝对路径>", "<OpenCode 状态目录的绝对路径>", "read-only", "[]", "{\"opencode_config\":\"<本机 OpenCode 配置文件的绝对路径>\"}"],
+      "env": ["ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_API_KEY", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY"],
+      "timeout_ms": 20000
     }
   ]
 }

@@ -2,7 +2,7 @@
 
 面向 DSH 和其他 Agent Harness 的跨组协作台账与共享工具库。首版将事项责任、版本化交付、人工验收、Agent 执行记录和共享能力包放进一个可自托管的工作空间。
 
-> 当前源码版本：0.4.0。独立服务、CLI 与 MCP 支持并行流水线、跨步骤回退和显式启用的自动执行。DSH 看板与 Superagent 是可选适配器；其他宿主可通过通用协议接入。
+> 当前源码版本：0.5.0。独立服务、CLI 与 MCP 支持并行流水线、跨步骤回退和显式启用的自动执行。DSH 看板与 Superagent 是可选适配器；其他宿主可通过通用协议接入。
 
 ## 现在可以做什么
 
@@ -11,7 +11,7 @@
 - 创建、发布流水线模板和跨组任务；无依赖步骤并行执行，汇合步骤等待所有前置交付通过验收。
 - 流水线支持退回重做、跨步骤回退、拒收后重新指派、暂停／恢复与取消；每轮固定上下文，旧轮次不能提交或验收新交付。
 - 在已启用 Hub 接入的 DSH 看板中双向操作关联事项：Hub 状态对账到卡片，接单、进展、交付和审核通过带身份的明确命令提交给 Hub；本地内容和 Superagent 工单状态各自保留。
-- 按成员和流水线显式启用 Agent 自动派发，可选择 Superagent 或本机 Codex、Claude Code 执行器；运行成功仍需提交交付和具名验收。
+- 按成员和流水线显式启用 Agent 自动派发，可选择 Superagent 或本机 Codex、Claude Code、OpenCode V2 执行器；运行成功仍需提交交付和具名验收。
 - 使用通用协议接入其他看板或执行器；可选进程内 Node 接口或跨语言 JSON-RPC stdio，并按真实能力声明启动、状态查询、取消和恢复。
 - 维护事项依赖，避免循环；前置事项验收通过后才允许开始。
 - 分别记录本地待办绑定和 Agent Run。Run 成功只更新执行证据，业务事项仍需交付与验收。
@@ -21,7 +21,7 @@
 - 将共享 Skill 固定版本安装到 Claude Code、Codex 或 OpenCode 的项目发现目录；通过通用 CLI 安装并显式运行共享脚本。
 - 使用 SQLite 单实例服务，提供幂等写入、版本冲突检测、事件游标与数据库/附件备份。
 
-本项目不内置模型账户或远程执行集群；自动派发默认关闭。Superagent 与本机 CLI 执行器不能保证安装固定能力版本，遇到固定能力要求会在派发前拒绝；取消请求不能代替宿主停止确认。共享能力库中的 workflow/app 类型仍用作目录和资料发布。
+本项目不内置模型账户或远程执行集群；自动派发默认关闭。上述执行器在启动前将固定版本的内置文件安装到每次派发独立的工作区目录并校验内容；没有文件或校验失败时不会启动。OpenCode 可原生发现其中的 Skill，其他能力包不会因此自动注册为 MCP、插件或应用。Windows CLI 的停止确认会核查受监管的进程组；Superagent 现有接口只返回停止请求回执，仍须人工核实。
 
 流水线操作与接口示例见 [流水线说明](docs/pipeline-workflows.md)。
 
@@ -115,7 +115,7 @@ node packages/cli/bin/teamhub.mjs --help
 python -m teamhub.mcp_server
 ```
 
-`packages/dsh-plugin` 注册真实 DSH 工具，调用共享 API。启用兼容的 `dsh-todo-kanban` 服务后，可关联并自动同步流水线；也可显式配置其他看板和执行器适配器。可选 Superagent 适配器有固定目录、工具版本及停止确认限制，详见 [协议说明](docs/adapter-protocol-v1.md)。已有环境的备份、升级和回滚见 [0.3.0 升级说明](docs/adapter-upgrade.md)。
+`packages/dsh-plugin` 注册真实 DSH 工具，调用共享 API。启用兼容的 `dsh-todo-kanban` 服务后，可关联并自动同步流水线；也可显式配置其他看板和执行器适配器。可选 Superagent 适配器有固定目录和停止确认限制，详见 [协议说明](docs/adapter-protocol-v1.md)。已有环境的备份、升级和回滚见 [升级说明](docs/adapter-upgrade.md)。
 
 HTTP API 交互文档：**http://127.0.0.1:8765/docs**。所有业务读取和写入都使用 Bearer 身份令牌；健康检查和显式演示身份入口除外。动态事项操作的请求结构见 [实现契约](docs/implementation-contract.md)。
 

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { HubError } from './client/index.mjs';
+import { verifyRuntimeCapabilities } from './client/runtime-capabilities.mjs';
 
 /** 基于本机 Superagent 管理 HTTP 接口的可选适配器。 */
 export class DshSuperagentAdapter {
@@ -30,7 +31,7 @@ export class DshSuperagentAdapter {
       const state = await this.request('GET', '/state');
       const ready = state?.health?.runtime?.state === 'ready' && !state?.setup?.problem;
       return { available: ready, protocol_version: 1, kind: 'executor', version: 'management-api',
-        canCancel: true, canRecover: Boolean(this.stateDir), paused: state?.paused === true,
+        canCancel: true, canRecover: Boolean(this.stateDir), canInstallCapabilities: true, paused: state?.paused === true,
         ...(!ready ? { reason: 'Superagent runtime is not ready.' } : {}) };
     } catch { return { available: false, reason: 'Local Superagent management API is unavailable.' }; }
   }
@@ -88,9 +89,7 @@ export class DshSuperagentAdapter {
   async start(input) {
     const reject = message => { throw new HubError('ADAPTER_PRECONDITION_FAILED', message); };
     if (!input?.input_snapshot?.title || !input.dispatch_id || !input.workspace_ref) reject('Missing the frozen task snapshot, dispatch ID or workspace.');
-    if (!Array.isArray(input.capability_releases) || input.capability_releases.length) {
-      reject('Superagent management API cannot guarantee installation of the pinned capability versions.');
-    }
+    if (!Array.isArray(input.capability_releases)) reject('Missing the pinned capability versions.');
     let settings, directory;
     try {
       settings = await this.request('GET', '/settings');
@@ -106,9 +105,26 @@ export class DshSuperagentAdapter {
       if (error.code === 'ADAPTER_PRECONDITION_FAILED') throw error;
       reject('Cannot verify the Superagent task type and fixed workspace before launch.');
     }
+    try { await verifyRuntimeCapabilities(input.workspace_ref, input.dispatch_id, input.capability_releases, input.installed_capabilities || []); }
+    catch { reject('The pinned capability files could not be verified before launch.'); }
+    const entries = [];
+    try {
+      for (const item of input.installed_capabilities || []) {
+        if (!item.entry) continue;
+        const content = await readFile(path.join(item.directory, ...item.entry.split('/')));
+        const expected = item.files.find(file => file.path === item.entry)?.sha256;
+        if (createHash('sha256').update(content).digest('hex') !== expected) reject('The pinned entry changed before launch.');
+        entries.push({ capability_id: item.capability_id, release_id: item.release_id, version: item.version,
+          entry: item.entry, content: content.toString('utf8') });
+      }
+    } catch (error) {
+      if (error.code === 'ADAPTER_PRECONDITION_FAILED') throw error;
+      reject('Cannot read the pinned capability entry before launch.');
+    }
     const snapshot = { ...input.input_snapshot, spec_revision: input.spec_revision,
-      assignment_generation: input.assignment_generation, capability_releases: input.capability_releases };
-    const request = '按以下 Agent Team Hub 固定快照执行。执行结果不代表业务验收；不要自行改变验收状态。\n' + JSON.stringify(snapshot);
+      assignment_generation: input.assignment_generation, capability_releases: input.capability_releases,
+      installed_capabilities: input.installed_capabilities || [], capability_entries: entries };
+    const request = '按以下 Agent Team Hub 固定快照执行。固定能力已安装在 installed_capabilities 的目录中，入口内容也在 capability_entries 中；使用固定版本，不要替换为其他版本。执行结果不代表业务验收；不要自行改变验收状态。\n' + JSON.stringify(snapshot);
     if (request.length > 20000) reject('The frozen task snapshot exceeds the Superagent request limit.');
     const title = Array.from(String(input.input_snapshot.title)).slice(0, 100).join('');
     await this.rememberLookup(input.dispatch_id, title, request, input.workspace_ref);

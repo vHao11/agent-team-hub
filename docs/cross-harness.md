@@ -130,6 +130,8 @@ node packages/cli/bin/teamhub.mjs tools run "D:\team-tools\log-summary\0.1.0" --
 
 `mcp/plugin/workflow/app` 类型现在支持目录、manifest 和版本资料发布；任意第三方 MCP 的自动安装、跨宿主插件移植、工作流执行器及应用部署不在当前实现范围。
 
+流水线自动派发可以在每次运行前把固定版本文件安装到独立的 `.teamhub-runs/<dispatch_id>/capabilities` 目录并校验。OpenCode V2 执行器将固定 `SKILL.md` 注册为当次会话的技能源；Codex、Claude Code 和 Superagent 通过任务快照获取入口路径，Superagent 同时收到经过校验的入口文本。安装不会自动启动脚本或激活任意 MCP、插件和应用，完整边界见 [通用接入协议](adapter-protocol-v1.md)。
+
 ## 5. 兼容性与实际验证
 
 标准 MCP 握手成功只说明协议接通；完整业务测试还需要验证身份、实际 HTTP 请求、交付和验收。真实宿主验证还需要宿主确实加载生成配置并连接本项目 MCP。

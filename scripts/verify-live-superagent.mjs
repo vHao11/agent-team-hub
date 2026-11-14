@@ -1,6 +1,8 @@
 /** 仅对隔离演示 Hub 和显式指定的真实本机 Superagent 运行验收任务。 */
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
+import { promises as fs } from 'node:fs';
+import path from 'node:path';
 import { HubClient } from '../packages/client/src/index.mjs';
 import { AdapterRegistry, LocalBridge } from '../packages/client/src/bridge.mjs';
 import { AutoDispatcher } from '../packages/client/src/auto-dispatch.mjs';
@@ -38,12 +40,20 @@ registry.registerExecutor('dsh-superagent', new DshSuperagentAdapter({ url: supe
 const bridge = new LocalBridge(implementer, { registry, stateDir, instanceId: 'live-validation-instance' });
 const auto = new AutoDispatcher(implementer, bridge);
 const op = () => `live-validation-${randomUUID()}`;
-const marker = 'TEAMHUB_LIVE_SUPERAGENT_OK';
+const marker = `PINNED_${randomUUID().replaceAll('-', '').toUpperCase()}`;
+const capability = await requester.createCapability({ slug: `superagent-validation-${randomUUID()}`, name: '【系统测试】固定能力',
+  description: '隔离环境中的固定版本技能', kind: 'skill', tags: ['验证'] });
+const publish = (version, text) => requester.publishRelease(capability.id, { version,
+  manifest: { schema_version: 1, kind: 'skill', entry: 'SKILL.md', version },
+  files: { 'SKILL.md': `---\nname: validation\ndescription: 读取固定版本的验证标识\n---\n\n${text}\n` } });
+const fixed = await publish('1.0.0', `请在报告中原样写出这个标识：${marker}`);
+await publish('2.0.0', '这是较新的版本，但此流程不应使用它。');
 const definition = {
   roles: [{ key: 'dev', label: '实施组', kind: 'team' }, { key: 'qa', label: '验证组', kind: 'team' },
     { key: 'review', label: '验收人', kind: 'reviewer' }],
-  steps: [{ key: 'agent', name: '只读模型验证', team_role: 'dev', reviewer_role: 'review', depends_on: [], capabilities: [],
-    acceptance_spec: [`报告包含 ${marker}`], required_artifact_kinds: ['document'] },
+  steps: [{ key: 'agent', name: '只读模型验证', team_role: 'dev', reviewer_role: 'review', depends_on: [],
+    capabilities: [{ capability_id: capability.id, version: '1.0.0' }],
+    acceptance_spec: ['报告包含固定技能中的标识'], required_artifact_kinds: ['document'] },
   { key: 'parallel', name: '并行人工验证', team_role: 'qa', reviewer_role: 'review', depends_on: [], capabilities: [],
     acceptance_spec: ['提交合成验证记录'], required_artifact_kinds: ['document'] },
   { key: 'join', name: '汇合验证', team_role: 'qa', reviewer_role: 'review', depends_on: ['agent', 'parallel'], capabilities: [],
@@ -52,7 +62,7 @@ const definition = {
 const template = await requester.request('POST', '/workflow-templates', { operation_id: op(), name: '【系统测试】并行跨组模板', definition });
 const release = await requester.request('POST', `/workflow-templates/${template.id}/publish`, { operation_id: op(), expected_revision: template.draft_revision });
 let view = await requester.request('POST', '/pipelines', { operation_id: op(), title: '【系统测试】真实 Superagent 接入',
-  description: `这是一条隔离验收任务。不要读取、修改、删除或发送任何文件和外部信息。请只在报告中写出 ${marker}，并使用工单报告工具提交 ready 状态。`,
+  description: '这是一条隔离验收任务。请阅读 capability_entries 中固定技能的入口内容，将其中的标识原样写入报告，并使用工单报告工具提交 ready 状态。不要修改、删除或发送文件和外部信息。',
   project_id: 'proj-interface', template_version_id: release.id,
   role_bindings: { dev: 'team-clearing', qa: 'team-qa', review: 'u-lin' }, assignees: { agent: 'u-chen', parallel: 'u-xu', join: 'u-xu' } });
 const pipeline = view.pipeline.id;
@@ -97,6 +107,10 @@ while (Date.now() < deadline) {
 if (run?.status !== 'succeeded') throw new Error(`真实 Superagent 未确认成功：${run?.status || 'unknown'}；派发 ${dispatchId}`);
 assert.equal(launchRequests, 1, '响应丢失后的恢复不能重复派单。');
 assert.ok(run.external_run_id, '真实工单句柄必须存在');
+assert.equal(run.capability_releases[0]?.release_id, fixed.id);
+assert.equal(run.capability_releases[0]?.version, '1.0.0');
+assert.ok(String(run.result_summary || '').includes(marker), '真实模型必须读取固定技能后报告其独有标识。');
+assert.match(await fs.readFile(path.join(type.directory, '.teamhub-runs', dispatchId, 'capabilities', capability.id, 'SKILL.md'), 'utf8'), new RegExp(marker));
 const item = await implementer.getItem(view.steps[0].item.id);
 const evidence = await implementer.uploadArtifact(new Blob([run.result_summary || '真实 Superagent 执行已确认完成。'], { type: 'text/plain' }), 'superagent-result.txt');
 const delivery = await implementer.submitDelivery(item.item.id, { operation_id: op(), expected_version: item.item.version,
@@ -111,4 +125,5 @@ await completeHuman(2, tester, '已核对两个分支的交付');
 assert.equal(view.pipeline.status, 'completed');
 console.log(JSON.stringify({ event: 'live_superagent_workflow_passed', pipeline_status: view.pipeline.status,
   actual_ticket_created: true, real_model_run_succeeded: true, parallel_join: true, teams: 2, demo_members: 3,
-  lost_response_recovered_without_redispatch: true, marker_present_in_result: String(run.result_summary || '').includes(marker), ticket_id: run.external_run_id }));
+  fixed_version_installed_and_read: true, newer_version_ignored: true,
+  lost_response_recovered_without_redispatch: true, marker_present_in_result: true, ticket_id: run.external_run_id }));

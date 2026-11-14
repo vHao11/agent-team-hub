@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { HubError, operationId } from './index.mjs';
 import { clientInstanceId, defaultStateDir, safeKey, writeJsonAtomic } from './state.mjs';
+import { prepareRuntimeCapabilities } from './runtime-capabilities.mjs';
 
 function derivedOperationId(original, suffix) {
   const combined = `${original}-${suffix}`;
@@ -65,6 +66,7 @@ export class LocalBridge {
   }
   async start(itemId, { adapter: name, expected_version, workspace_ref, capabilities, pipeline_attempt_id, pipeline_generation, operation_id = operationId() }) {
     const adapter = await this.requireAdapter(this.registry.executors, name);
+    const adapterCapabilities = await adapter.probe();
     const instance = await this.instance();
     const run = await this.client.createRun(itemId, { operation_id, expected_version, client_instance_id: instance,
       harness: name, workspace_ref, ...(capabilities ? { capabilities } : {}),
@@ -84,22 +86,37 @@ export class LocalBridge {
       return { run: await this.client.getRun(run.id), launch_replayed: false,
         requires_reconciliation: !previous.handle, handle: previous.handle ?? null };
     }
+    let hostStartAttempted = false;
     try {
+      let installed;
+      if (adapterCapabilities.canInstallCapabilities === true) {
+        try { installed = await prepareRuntimeCapabilities(this.client, workspace_ref, run.dispatch_id, run.capability_releases); }
+        catch (error) { throw new HubError('ADAPTER_PRECONDITION_FAILED', `固定能力安装未完成：${error.message}`); }
+        await writeJsonAtomic(recordFile, { ...reservation, phase: 'prepared', installed_capabilities: installed });
+        const latest = await this.client.getRun(run.id);
+        if (latest.status === 'cancel_requested') {
+          const cancelled = await this.client.reportRun(run.id, { operation_id: derivedOperationId(operation_id, 'cancelled-before-start'),
+            client_instance_id: instance, sequence: latest.sequence + 1, status: 'cancelled', summary: 'Execution was cancelled before the host started.' });
+          await writeJsonAtomic(recordFile, { ...reservation, phase: 'cancelled-before-start', installed_capabilities: installed, sequence: cancelled.sequence });
+          return { run: cancelled, launch_replayed: false, cancelled_before_start: true };
+        }
+      }
+      hostStartAttempted = true;
       const handle = await adapter.start({ item_id: itemId, dispatch_id: run.dispatch_id, run_id: run.id,
         workspace_ref, capability_releases: run.capability_releases,
         input_snapshot: run.input_snapshot, spec_revision: run.spec_revision,
-        assignment_generation: run.assignment_generation });
+        assignment_generation: run.assignment_generation, ...(installed ? { installed_capabilities: installed } : {}) });
       if (!handle || (!handle.session_id && !handle.run_id)) throw new HubError('INVALID_ADAPTER_RESULT', 'Execution adapter returned no stable session or run id.');
       const initialStatus = handle.status ?? 'starting';
       if (!['queued', 'starting', 'running', 'waiting_input'].includes(initialStatus)) throw new HubError('INVALID_ADAPTER_RESULT', 'Execution adapter returned an invalid initial status.');
-      await writeJsonAtomic(recordFile, { ...reservation, phase: 'launched', handle });
+      await writeJsonAtomic(recordFile, { ...reservation, phase: 'launched', handle, ...(installed ? { installed_capabilities: installed } : {}) });
       const report = await this.client.reportRun(run.id, { operation_id: derivedOperationId(operation_id, 'started'), client_instance_id: instance,
         sequence: reservation.sequence + 1, status: initialStatus, external_session_id: handle.session_id ?? null,
         external_run_id: handle.run_id ?? null, summary: 'Execution adapter returned a local execution handle.' });
-      await writeJsonAtomic(recordFile, { ...reservation, phase: 'launched', handle, sequence: report.sequence });
+      await writeJsonAtomic(recordFile, { ...reservation, phase: 'launched', handle, sequence: report.sequence, ...(installed ? { installed_capabilities: installed } : {}) });
       return { run: report, handle, launch_replayed: false };
     } catch (error) {
-      if (error.code === 'ADAPTER_PRECONDITION_FAILED') {
+      if (error.code === 'ADAPTER_PRECONDITION_FAILED' || !hostStartAttempted) {
         try {
           await this.client.reportRun(run.id, { operation_id: derivedOperationId(operation_id, 'not-started'), client_instance_id: instance,
             sequence: reservation.sequence + 1, status: 'failed', summary: 'Execution adapter rejected the request before host launch.' });

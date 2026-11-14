@@ -45,3 +45,17 @@ def test_wire_schema_requires_a_stable_execution_handle():
     assert list(validator.iter_errors(request))
     request['params']['handle']['run_id'] = 'external-run-1'
     validator.validate(request)
+
+
+def test_installed_capability_requires_version_identity_and_file_hashes():
+    validator = Draft202012Validator(load('adapter-wire-v1.schema.json'))
+    capability = {'capability_id': 'cap-1', 'release_id': 'rel-1', 'version': '1.0.0', 'kind': 'skill',
+                  'slug': 'example', 'directory': '/workspace/.teamhub-runs/dispatch/capabilities/cap-1',
+                  'entry': 'SKILL.md', 'manifest_sha256': 'a' * 64, 'files': [{'path': 'SKILL.md', 'sha256': 'b' * 64}]}
+    params = {'item_id': 'item', 'run_id': 'run', 'dispatch_id': 'dispatch', 'workspace_ref': '/workspace',
+              'input_snapshot': {}, 'capability_releases': [], 'installed_capabilities': [capability],
+              'spec_revision': 1, 'assignment_generation': 1}
+    request = {'jsonrpc': '2.0', 'id': '1', 'method': 'execution.start', 'params': params}
+    validator.validate(request)
+    capability['files'][0]['sha256'] = 'invalid'
+    assert list(validator.iter_errors(request))

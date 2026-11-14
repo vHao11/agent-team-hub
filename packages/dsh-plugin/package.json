@@ -1,6 +1,6 @@
 {
   "name": "dsh-team-hub",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "license": "MIT",
   "description": "Shared work ledger and capability catalog bridge for DeepSeek Harness",

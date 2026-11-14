@@ -63,7 +63,10 @@ export async function installRelease(release, destination) {
     await fs.writeFile(path.join(staging, META), JSON.stringify(metadata, null, 2));
     await fs.rename(staging, target);
     return { installed: true, directory: target, release_id: release.id, version: release.version, files: names.length };
-  } catch (error) { await fs.rm(staging, { recursive: true, force: true }); throw error; }
+  } catch (error) {
+    if (path.dirname(staging) !== path.dirname(target) || !path.basename(staging).startsWith(path.basename(target) + '.install-')) throw error;
+    await fs.rm(staging, { recursive: true, force: true }); throw error;
+  }
 }
 
 export async function runInstalled(directory, args = [], { timeout = 120000 } = {}) {

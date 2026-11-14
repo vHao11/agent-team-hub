@@ -1,5 +1,9 @@
 # 适配器与流水线升级
 
+## 从 0.4.0 升级到 0.5.0
+
+0.5.0 沿用数据库 schema 2 和已有看板协议。固定版本安装只在显式派发时发生；默认不自动启用执行。升级前在候选环境运行 `scripts/verify_existing_snapshot.py` 检查旧数据副本，并用 `scripts/backup_stage2_local.py` 备份 Hub、看板、Superagent、profile 和桥接状态。确认宿主空闲后停止目标 DSH 和 Hub，保留旧虚拟环境及 profile；使用 `scripts/upgrade-dsh-profile-stage2.ps1` 指定 `-CurrentVersion 0.4.0 -TargetVersion 0.5.0` 和已验证的新插件包，再切换 Hub 启动器至新环境。重启后核对旧关联与业务数据，用明确标记的测试任务验证自动安装与同步。回滚前先保存升级后的数据，再恢复对应启动器、profile 与旧环境；备份不会合并升级期间的编辑。
+
 ## 从 0.3.0 升级到 0.4.0
 
 0.4.0 继续使用数据库 schema 2；旧流水线模板省略依赖字段时保持串行行为，旧看板订阅继续沿用原外部键。双向看板操作需要工作台的 `dsh-todo-kanban` 0.8.2 和 `dsh-team-hub` 0.4.0 一起部署，旧看板只能继续使用其已有快照能力。自动派发默认关闭，升级不会替任何流程开启。

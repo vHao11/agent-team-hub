@@ -75,12 +75,14 @@ Python 标准库示例 [`local-json-board.py`](../examples/adapters/local-json-b
 
 | 方法 | 参数 | 返回 |
 | --- | --- | --- |
-| `execution.start` | `item_id`、`run_id`、`dispatch_id`、`workspace_ref`、`input_snapshot`、`capability_releases`、`spec_revision`、`assignment_generation` | 至少一个稳定 `run_id` 或 `session_id`；可附初始 `status`：`queued`、`starting`、`running`、`waiting_input`，省略时为 `starting` |
+| `execution.start` | `item_id`、`run_id`、`dispatch_id`、`workspace_ref`、`input_snapshot`、`capability_releases`、`spec_revision`、`assignment_generation`；声明 `install_pinned` 时附 `installed_capabilities` | 至少一个稳定 `run_id` 或 `session_id`；可附初始 `status`：`queued`、`starting`、`running`、`waiting_input`，省略时为 `starting` |
 | `execution.status` | `handle` | `status`：`queued`、`starting`、`running`、`waiting_input`、`succeeded`、`failed`、`cancelled` 或 `unknown`；可附 `summary` |
 | `execution.find` | `dispatch_id` | 已有句柄，或 `null`；只查询，不新建执行 |
 | `execution.cancel` | `handle` | `requested` 和 `confirmed` 布尔值 |
 
 `execution.find` 和 `execution.cancel` 只在相应能力为 true 时调用。`workspace_ref` 是调用者提供的本地工作区定位信息；具体适配器必须核实宿主使用哪个目录，不能把它当成宿主已经接受该目录的证据。
+
+执行器可声明 `capabilities.install_pinned: true`，表示它接受桥接提供的固定版本安装证明。桥接按 Run 中的 `capability_id`、`release_id` 和版本读取不可变发布，将内置文本文件安装到 `<workspace>/.teamhub-runs/<dispatch_id>/capabilities/<capability_id>`，并在启动前检查清单、文件哈希及额外文件。`installed_capabilities` 包含目录、入口、版本和哈希，适配器必须核对并将路径传给宿主；缺少包、路径冲突或校验失败时拒绝启动。每次派发独占目录，不覆盖其他执行，目录保留供排查与审计。安装只写入文件，不执行脚本，也不代表已注册第三方 MCP、插件或应用。旧适配器不声明该字段时维持原行为，并应自行拒绝无法满足的固定能力。
 
 ## 在 CLI 和 DSH 中使用
 
@@ -101,14 +103,18 @@ DSH 的 `dsh-team-hub` 可在本机插件配置中设置 `adapterConfigFile`，�
 
 本机 DSH 插件配置中显式设置 `superagentUrl: "http://127.0.0.1:<DSH端口>"` 才会注册 `dsh-superagent` 执行器；可选 `superagentTaskType` 指定已配置任务类型。它通过 Superagent 的本机管理接口发送固定执行快照及 `dispatch_id`（对应其 `requestId`），查询已有工单，并请求停止。默认不启动任务。
 
-开始前适配器核实所选任务类型（或全局设置）使用固定目录，且该目录与 `workspace_ref` 指向同一实际目录；还会检查创建后工单的目录。Superagent 的创建 API 没有原子目录版本条件，运行期间应避免同时修改其目录配置；如果创建后发现目录不一致，适配器请求停止并将结果保留为待核实。当前 API 不能保证安装 Hub 固定能力版本，因此只允许没有固定能力的运行，其他请求在派发前拒绝。执行快照须符合 Superagent 请求长度限制。
+开始前适配器核实所选任务类型（或全局设置）使用固定目录，且该目录与 `workspace_ref` 指向同一实际目录；还会检查创建后工单的目录。Superagent 的创建 API 没有原子目录版本条件，运行期间应避免同时修改其目录配置；如果创建后发现目录不一致，适配器请求停止并将结果保留为待核实。桥接会安装并校验固定版本的内置文件，适配器将入口路径和经过哈希校验的入口内容加入执行快照，即使宿主没有文件读取工具也能使用入口内容。执行快照超过 Superagent 请求长度限制时在创建工单前拒绝；其他附件仍需宿主具备文件读取能力。
 
 当前已核实的 Superagent 版本可通过只读决策记录中的触发键找回丢失启动响应的工单；桥接在启动前保存必要的匹配信息，查找不到或宿主算法变化时保持 `unknown`，不自动重新派发。这依赖已核实版本的内部触发键算法，不应视为所有 Superagent 版本都提供的稳定按 ID 查询 API。停止接口返回的是请求回执，不能证明后台执行资源已退出；适配器返回 `confirmed: false`，人工核实停止后由原执行登记人使用 `teamhub_run_report` 或 MCP `hub_run_report` 回报。真实本机 Superagent 已完成只读合成模型任务，测试刻意丢失启动响应后找回同一工单，并完成隔离 Hub 的两组并行汇合与验收。
 
 本机具有 Superagent 源码及其 Vitest 依赖时，可在本仓库构建 DSH 插件后运行 `scripts/verify-superagent-contract.test.ts`。将 `TEAMHUB_SUPERAGENT_SOURCE` 和 `TEAMHUB_SUPERAGENT_ADAPTER` 分别指向 Superagent 源码目录及本项目构建后的 `packages/dsh-plugin/lib/superagent-adapter.mjs`，使用该源码目录的 Vitest 运行 `vitest run --root <本仓库> --globals scripts/verify-superagent-contract.test.ts`。测试只创建临时目录和合成工单。
 
-### 本机 Codex 与 Claude Code
+### 本机 Codex、Claude Code 与 OpenCode
 
-[`stdio-executors.example.json`](../examples/adapters/stdio-executors.example.json) 演示如何通过 `cli-executor.mjs` 和 JSON-RPC stdio 注册 Codex、Claude Code。必须将 Node、各宿主程序、工作区和状态目录替换为本机绝对路径；每个执行器只允许其配置的实际工作区，可选择 `read-only` 或 `workspace-write`。Claude 的只读模式使用其 `plan` 权限、只启用 Read/Grep/Glob 内置工具并禁止加载已配置的 MCP 服务；实际权限及 hooks 仍受宿主自身配置约束，不应把本协议当作额外沙箱。
+[`stdio-executors.example.json`](../examples/adapters/stdio-executors.example.json) 演示如何通过 `cli-executor.mjs` 和 JSON-RPC stdio 注册 Codex、Claude Code 和 OpenCode V2。必须将 Node、各宿主程序、工作区和状态目录替换为本机绝对路径；每个执行器只允许其配置的实际工作区，可选择 `read-only` 或 `workspace-write`。Claude 的只读模式使用其 `plan` 权限、只启用 Read/Grep/Glob 内置工具并禁止加载已配置的 MCP 服务；实际权限及 hooks 仍受宿主自身配置约束，不应把本协议当作额外沙箱。
 
-执行器使用独立监督进程及持久状态按 `dispatch_id` 找回；Codex 以 JSONL 的 `turn.completed`，Claude 以成功 JSON 结果确认运行成功。已固定共享能力版本的任务在启动前拒绝，避免声称安装了未安装的版本。取消只请求终止本机子进程，不能确认其完整进程树，结果可能为 `unknown`。Codex 和 Claude Code 均已用本机真实只读任务验证；网络需要代理的环境应在本机设置相应代理变量并按示例显式继承。OpenCode 目前使用标准 MCP/CLI 接入，尚未提供其自动执行适配器。
+执行器使用独立监督进程及持久状态按 `dispatch_id` 找回；Codex、Claude Code、OpenCode 分别依据其结构化完成结果确认运行成功。Windows 使用 Job Object 在执行前监管子进程，收到取消后仅在进程组已退出时确认 `cancelled`；其他平台目前发出进程组终止请求后保留 `unknown`。Superagent 不属于此 Job，仍以其接口的停止回执为准。网络需要代理或模型凭据的环境应在本机配置并通过 `env` 白名单显式继承，示例不包含密钥。
+
+OpenCode 使用 `run --standalone --format json` 和单独的 `teamhub-executor` 权限配置：只允许读取、搜索及指定的固定 Skill，`workspace-write` 额外允许编辑；shell、子 Agent、其他工具和外部目录默认拒绝。写入模式要求从 Git 工作树根目录启动。固定 Skill 的 `SKILL.md` 从该次派发目录作为 OpenCode 显式技能源加载，其 ID 为 Hub `capability_id`；其余包通过固定路径读取。这些是宿主权限而非操作系统沙箱，已配置的宿主插件仍可能具有本机权限。OpenCode 的模型提供方仍按其配置使用，不能假定其 Anthropic 账号等同于其他宿主的账号。
+
+可以在示例的第八个执行器参数中使用 `{"opencode_config":"<配置文件绝对路径>"}` 指定本机 OpenCode 配置；前面的 `[]` 是可选的程序前置参数。配置文件应只引用环境变量或宿主的凭据管理，`env` 列出允许传入进程的变量名，不要把令牌值写入适配器配置。省略该参数时沿用 OpenCode 自身配置。

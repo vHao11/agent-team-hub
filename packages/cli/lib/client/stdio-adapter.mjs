@@ -116,12 +116,15 @@ class StdioAdapter {
     if (this.options.kind === 'executor' && value.available && (!value.capabilities.start || !value.capabilities.status)) {
       throw new HubError('INVALID_ADAPTER_RESULT', 'An available executor must support start and status.');
     }
+    if (value.capabilities.install_pinned !== undefined && typeof value.capabilities.install_pinned !== 'boolean') {
+      throw new HubError('INVALID_ADAPTER_RESULT', 'install_pinned must be a boolean when present.');
+    }
     this.description = value;
     const c = value.capabilities;
     return { available: value.available, protocol_version: 1, kind: value.kind, version: value.version,
       ...(value.available ? {} : { reason: 'Adapter reported unavailable.' }),
       ...(value.kind === 'board' ? { canLinkItem: c.item_link, canSync: c.pipeline_sync, canDetach: c.detach_pipeline }
-        : { canCancel: c.cancel, canRecover: c.recover }) };
+        : { canCancel: c.cancel, canRecover: c.recover, canInstallCapabilities: c.install_pinned === true }) };
   }
   supports(name) { return this.description?.available === true && this.description.capabilities[name] === true; }
 }

@@ -12,7 +12,7 @@
 | DSH bundle `dsh-team-hub` | 25 个 `teamhub_*` 原生工具；流程关联、自动派发、AdapterRegistry 与跨语言适配器 | Windows rc.1 隔离 profile 与本机真实 Superagent 验证 | 其他 DSH 版本与目标 profile 的验证 |
 | DSH 待办看板双向联动 | 稳定外部键、状态对账、显式业务命令与掉线提示 | 真实 `dsh-todo-kanban`、DSH rc.1、Hub 和浏览器的隔离跨组闭环 | 其他目标 profile 更新、重启和正式数据备份 |
 | 增强 Superagent 自动启动 | 固定目录核验、单次派发、本机持久记录与状态核对 | 真实本机只读模型任务；模拟响应丢失后找回同一工单并完成两组并行汇合 | 停止回执不证明执行已停止；不支持自动安装固定工具版本；找回依赖当前宿主触发键算法 |
-| 其他 agent harness | 专用配置生成、MCP/CLI、session 绑定；Codex/Claude Code 本机执行器 | Codex 和 Claude Code 的真实只读任务及恢复均已验证 | OpenCode 自动执行与其他宿主需专用适配，取消不确认整个进程树 |
+| 其他 agent harness | 专用配置生成、MCP/CLI、session 绑定；Codex、Claude Code、OpenCode V2 本机执行器 | Codex、Claude Code 的真实只读任务及恢复已验证；OpenCode 真实模型、固定 Skill 和跨组汇合已验证 | 其他宿主仍需专用适配；Windows CLI 可确认受监管的进程组退出，其他平台停止结果可能未知 |
 | 通用本机适配器协议 v1 | 看板和执行器能力发现、跨语言 JSON-RPC stdio、独立订阅和安全恢复 | Python 参考看板及模拟执行器通过真实 Hub、MCP、CLI 的跨组闭环 | 每种实际第三方宿主仍需实现并验证自己的适配器 |
 | 共享工具库 | Skill/脚本样例、不可变版本、宿主 Skill 安装目录、工具集引用 | 三种目录实际写文件；样例脚本可运行；安装不执行代码 | MCP/plugin/workflow/app 类型目前为目录与 manifest；既有宿主会话的 Skill 加载需确认 |
 

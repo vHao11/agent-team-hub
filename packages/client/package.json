@@ -1,6 +1,6 @@
 {
   "name": "@agent-team-hub/client",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "type": "module",
   "license": "MIT",
   "description": "HTTP client and local bridge contracts for Agent Team Hub",

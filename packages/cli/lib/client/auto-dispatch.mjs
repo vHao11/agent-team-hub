@@ -111,7 +111,7 @@ export class AutoDispatcher {
       try {
         const launched = await this.bridge.start(item.id, { adapter: policy.adapter, workspace_ref: policy.workspace_ref,
           expected_version: item.version, pipeline_attempt_id: context.attempt_id, pipeline_generation: context.generation, operation_id });
-        results.push({ step: step.step_key, action: 'started', dispatch_id: launched.run.dispatch_id });
+        results.push({ step: step.step_key, action: launched.cancelled_before_start ? 'cancelled_before_start' : 'started', dispatch_id: launched.run.dispatch_id });
       } catch (error) { results.push({ step: step.step_key, action: 'start_pending', error: error.code || 'START_FAILED',
         ...(error.details?.dispatch_id ? { dispatch_id: error.details.dispatch_id } : {}) }); }
     }

@@ -20,7 +20,7 @@
     },
     {
       "if": { "properties": { "kind": { "const": "executor" } }, "required": ["kind"] },
-      "then": { "properties": { "capabilities": { "required": ["start", "status", "cancel", "recover"], "properties": { "start": { "type": "boolean" }, "status": { "type": "boolean" }, "cancel": { "type": "boolean" }, "recover": { "type": "boolean" } } } } }
+      "then": { "properties": { "capabilities": { "required": ["start", "status", "cancel", "recover"], "properties": { "start": { "type": "boolean" }, "status": { "type": "boolean" }, "cancel": { "type": "boolean" }, "recover": { "type": "boolean" }, "install_pinned": { "type": "boolean" } } } } }
     },
     {
       "if": { "properties": { "kind": { "const": "executor" }, "available": { "const": true } }, "required": ["kind", "available"] },
