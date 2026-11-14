@@ -2,7 +2,21 @@
 
 Agent Team Hub 提供跨组协作台账与共享能力目录。服务端保存业务事实，各成员的 harness 承担本机执行。代码采用独立服务与薄适配层，核心领域不依赖 DSH。
 
-这是根据设计方案新建的实现；本次没有取得 Windows 本机的 HajimiWorkbench、个人待办看板和增强 Superagent 源码，不能将这里的接口描述为这些本机项目已经提供的接口。
+核心业务契约独立于宿主；本机 DSH 看板通过已核实的 Cordis 服务接入，其他看板和执行器可选择进程内或跨语言适配器。具体宿主能力及实测范围见 [集成边界](integration-gaps.md)。
+
+```mermaid
+flowchart LR
+    H[Hub：台账、流程、验收] <-->|HTTP| C[CLI 或 DSH 客户端]
+    H <-->|HTTP| M[MCP 服务]
+    M <-->|MCP| A[其他 Agent Harness]
+    C --> B[本机桥接与订阅状态]
+    B --> I[进程内适配器]
+    B --> S[JSON-RPC stdio 适配器]
+    I --> D[DSH 看板等宿主]
+    S --> X[其他看板或执行器]
+```
+
+适配器能力发现、独立身份、快照和停止确认语义见 [通用接入协议 v1](adapter-protocol-v1.md)。跨语言适配器是显式配置的本机进程，不从 Hub 自动安装。
 
 ## 组成
 

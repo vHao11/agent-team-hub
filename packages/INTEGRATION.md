@@ -8,14 +8,15 @@
 | --- | --- | --- | --- |
 | HTTP 客户端 `@agent-team-hub/client` | 台账、交付、审核、附件上传、绑定、Run、能力版本与组工具集 | Node 24 测试；异常、版本冲突、幂等请求转发 | 实际网络与正式成员权限配置 |
 | CLI `@agent-team-hub/cli` | JSON 输入输出、离线进度队列、固定版本安装与显式脚本执行 | 子进程 → HTTP 测试、安装路径与执行测试 | Windows 路径、Python 安装位置 |
-| 官方 Python MCP SDK | 47 个工具；stdio；协作、串行流水线、文本交付验收、能力发布与团队工具集 | 官方 `ClientSession` → stdio → 真实 Hub；双身份业务和三身份跨组串行流程闭环 | 宿主权限与真实会话 ID 获取 |
-| DSH bundle `dsh-team-hub` | 22 个 `teamhub_*` 原生工具；流程关联与 AdapterRegistry 扩展点 | Windows rc.1 隔离 profile 的真实注册与跨组流程；原 0.1.0 曾测 Linux rc.1、rc.2 | 0.2.0 在 rc.2 和用户正式 profile 的验证 |
+| 官方 Python MCP SDK | 48 个工具；stdio；协作、串行流水线、文本交付验收、能力发布、团队工具集与协议发现 | 官方 `ClientSession` → stdio → 真实 Hub；双身份业务和三身份跨组串行流程闭环 | 宿主权限与真实会话 ID 获取 |
+| DSH bundle `dsh-team-hub` | 23 个 `teamhub_*` 原生工具；流程关联、AdapterRegistry 与跨语言适配器 | 0.3.0 在 Windows rc.1 隔离 profile 真实注册；此前 0.2.0 完成看板流程 | 0.3.0 在 rc.2 和正式 profile 的验证 |
 | DSH 待办看板自动联动 | 可选 Cordis 看板服务、稳定外部键关联、状态投影与掉线提示 | 真实 `dsh-todo-kanban`、DSH rc.1、Hub 和浏览器的隔离闭环 | 目标 profile 更新、重启和正式数据备份 |
-| 增强 Superagent 自动启动 | `ExecutionAdapter` 契约、单次派发、本机持久记录、状态核对、确认取消 | 用测试适配器验证不重复启动、崩溃恢复、取消确认 | 已核对现有看板的工单投影；Superagent 执行适配器与真机派发尚未实现 |
+| 增强 Superagent 自动启动 | 可选执行适配器、固定目录核验、单次派发、本机持久记录与状态核对 | 本机管理 API 只读探测；隔离环境连接真实管理路由和领域引擎，执行器为测试替身 | 真实派发尚未验证；停止回执不证明执行已停止，丢失句柄不可按 ID 找回；不支持自动安装固定工具版本 |
 | 其他 agent harness | 专用配置生成、MCP/CLI、显式 session 绑定与 Run 回传 | 通用业务测试及真实客户端检查，见[宿主验证记录](../docs/harness-host-verification.md) | 各宿主自动启动/取消/看板仍需专用适配 |
+| 通用本机适配器协议 v1 | 看板和执行器能力发现、跨语言 JSON-RPC stdio、独立订阅和安全恢复 | Python 参考看板及模拟执行器通过真实 Hub、MCP、CLI 的跨组闭环 | 每种实际第三方宿主仍需实现并验证自己的适配器 |
 | 共享工具库 | Skill/脚本样例、不可变版本、宿主 Skill 安装目录、工具集引用 | 三种目录实际写文件；样例脚本可运行；安装不执行代码 | MCP/plugin/workflow/app 类型目前为目录与 manifest；既有宿主会话的 Skill 加载需确认 |
 
-DSH 默认探测 `dsh-todo-kanban` 的可选进程内服务；缺少兼容服务时 `teamhub_status` 显示看板不可用。默认没有 Superagent ExecutionAdapter，不会用模拟结果声称已启动真实 Agent。
+DSH 默认探测 `dsh-todo-kanban` 的可选进程内服务；缺少兼容服务时 `teamhub_status` 显示看板不可用。Superagent 执行适配器默认关闭，只有显式配置后才注册；不会用测试替身声称已启动真实 Agent。
 
 ## 2. CLI
 
@@ -37,11 +38,11 @@ node packages/cli/bin/teamhub.mjs items list --view inbox
 Push-Location packages/cli
 npm pack --pack-destination dist
 Pop-Location
-npm install -g ./packages/cli/dist/agent-team-hub-cli-0.1.0.tgz
+npm install -g ./packages/cli/dist/agent-team-hub-cli-0.2.0.tgz
 teamhub --help
 ```
 
-本仓库已附带上述 tarball。首次自行打包前若 `dist` 不存在，先创建目录。CLI bin 为 `teamhub`；Python 服务端命令使用 `python -m teamhub` 或 `teamhub-server`，不要混淆两者。
+首次自行打包前若 `dist` 不存在，先创建目录。CLI bin 为 `teamhub`；Python 服务端命令使用 `python -m teamhub` 或 `teamhub-server`，不要混淆两者。通用本机适配器的配置和命令见 [协议说明](../docs/adapter-protocol-v1.md)。
 
 ### 业务命令
 
@@ -146,26 +147,26 @@ $env:TEAMHUB_TOKEN = "<当前成员令牌>"
 
 此命令等待 MCP JSON-RPC stdio 输入，适合由宿主启动。不要把 Hub HTTP 地址误当成远程 MCP endpoint。`python -m teamhub.harness_config --harness <目标>` 会生成宿主自己的 JSON/TOML；各宿主示例位于 `examples/mcp/`，Python 路径应为本机绝对路径。生成器支持私有连接文件，也支持目标宿主正确的环境变量写法。配置与加载步骤见 [跨 Harness 接入](../docs/cross-harness.md)。
 
-工具共 47 个：原有台账、材料、能力目录、工具集、绑定与 Run 工具之外，新增模板的查询、创建、编辑、校验、发布、复制，以及流水线的创建、管理、重新指派和步骤操作。具体调用和轮次约束见 [串行流水线说明](../docs/pipeline-workflows.md)。业务写工具要求稳定操作 ID，版本化操作要求 `expected_version`；附件上传不提供幂等回执，应引用实际返回的附件 ID。文本附件上限 2 MiB UTF-8，二进制使用 Web/CLI。MCP 不自动执行脚本或启动 Agent。标准输出只用于协议；日志和配置错误进入 stderr。
+工具共 48 个：台账、材料、能力目录、工具集、绑定与 Run、流水线模板及步骤操作，以及 `hub_integration_contract` 协议发现。具体调用和轮次约束见 [串行流水线说明](../docs/pipeline-workflows.md)。业务写工具要求稳定操作 ID，版本化操作要求 `expected_version`；附件上传不提供幂等回执，应引用实际返回的附件 ID。文本附件上限 2 MiB UTF-8，二进制使用 Web/CLI。MCP 不自动执行脚本或启动 Agent。标准输出只用于协议；日志和配置错误进入 stderr。
 
 HTTPX 默认不继承系统代理变量，便于连接本机和明确配置的 Hub。确需组织代理时显式设置 `TEAMHUB_TRUST_ENV=1`，并安装该代理所需的 HTTPX 组件。
 
 ## 5. DSH 原生 bundle
 
-实现依据为官方 [构建工具文档](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/develop/basic/tool.md)、[配置文档](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/develop/basic/config.md) 和 [bundle 安装文档](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/develop/basic/publish.md)。SDK 开发依赖固定 `0.2.2-rc.2`，Node 要求 `>=24.9.0`。原版插件曾在官方 DSH `0.2.2-rc.1` 和 `0.2.2-rc.2` 验证加载；当前 0.2.0 已在 Windows rc.1 验证真实看板流程，rc.2 尚未复测。`engines.dsh` 与 SDK peer 声明这两个版本；其他版本需要重新验证后调整。
+实现依据为官方 [构建工具文档](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/develop/basic/tool.md)、[配置文档](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/develop/basic/config.md) 和 [bundle 安装文档](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/user/develop/basic/publish.md)。SDK 开发依赖固定 `0.2.2-rc.2`，Node 要求 `>=24.9.0`。0.3.0 已在 Windows rc.1 隔离 profile 验证加载；原版曾在官方 rc.1 和 rc.2 验证加载。`engines.dsh` 与 SDK peer 声明这两个版本，0.3.0 的 rc.2 和其他版本需要重新验证。
 
 ```powershell
 node packages/dsh-plugin/build.mjs
 Push-Location packages/dsh-plugin
 npm pack --pack-destination dist
 Pop-Location
-dsh plugin --profile web add ./packages/dsh-plugin/dist/dsh-team-hub-0.2.0.tgz
+dsh plugin --profile web add ./packages/dsh-plugin/dist/dsh-team-hub-0.3.0.tgz
 dsh --profile web --dump-config
 ```
 
 应先从当前源码构建 tarball。安装前设置 `TEAMHUB_URL`、`TEAMHUB_TOKEN`，或沿用当前 profile 的 `tokenFile`；重启该 profile 后调用 `teamhub_status`。`--dump-config` 只能证明配置合成，不等于工具已在实际会话成功运行。profile 名称以用户已有环境为准。不要为接入本项目重建用户现有 profile。
 
-包通过 `inject = ['tools']` 与 `ctx.tools.register(defineTool(...))` 注册原生工具。配置可设置 `serverUrl`、`tokenEnv`、`tokenFile`、`stateDir`、`clientInstanceId`、`timeoutMs` 和 `boardSyncSeconds`。`tokenEnv` 是环境变量名；`tokenFile` 是现有本机私有令牌文件的路径，均不把令牌值写入配置或订阅。
+包通过 `inject = ['tools']` 与 `ctx.tools.register(defineTool(...))` 注册原生工具。配置可设置 `serverUrl`、`tokenEnv`、`tokenFile`、`stateDir`、`clientInstanceId`、`timeoutMs`、`boardSyncSeconds`、`boardAdapter`、`adapterConfigFile`、`superagentUrl` 和 `superagentTaskType`。`tokenEnv` 是环境变量名；`tokenFile` 是现有本机私有令牌文件的路径，均不把令牌值写入配置或订阅。外部适配器和 Superagent 均需显式配置，具体限制见 [协议说明](../docs/adapter-protocol-v1.md)。
 
 原生工具为 `teamhub_status`、台账/目录工具、显式绑定/Run 登记/状态回传，以及 `teamhub_board_link/run_start/run_reconcile/run_cancel`。后一组依赖真实适配器。`run_reconcile` 需要显式调用，不含未经请求的后台自动调度。
 

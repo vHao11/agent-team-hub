@@ -2,6 +2,7 @@
   [Parameter(Mandatory=$true)][string]$TeamHubHome,
   [string]$PythonPath = '',
   [string]$DataDir = '',
+  [string]$ExpectedVersion = '0.2.0',
   [int]$Port = 8765,
   [switch]$Demo
 )
@@ -14,7 +15,7 @@ $productionData = [IO.Path]::GetFullPath((Join-Path $base 'data'))
 $logs = Join-Path $base 'logs'
 if (-not (Test-Path -LiteralPath $python -PathType Leaf)) { throw 'Team Hub 候选 Python 环境不存在。' }
 $version = & $python -c "import teamhub; print(teamhub.__version__)"
-if ($LASTEXITCODE -ne 0 -or ($version | Select-Object -Last 1) -ne '0.2.0') { throw 'Team Hub 候选环境版本不匹配，未启动。' }
+if ($LASTEXITCODE -ne 0 -or ($version | Select-Object -Last 1) -ne $ExpectedVersion) { throw 'Team Hub 候选环境版本不匹配，未启动。' }
 if ($Port -lt 1 -or $Port -gt 65535) { throw '端口无效。' }
 if ($Demo -and $data -ieq $productionData) { throw '演示模式不能使用正式数据目录。' }
 if (-not $Demo -and -not (Test-Path -LiteralPath (Join-Path $data 'teamhub.db') -PathType Leaf)) { throw 'Team Hub 工作空间不存在。' }

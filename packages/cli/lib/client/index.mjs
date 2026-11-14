@@ -52,6 +52,7 @@ export class HubClient {
     return result;
   }
   bootstrap() { return this.request('GET', '/bootstrap'); }
+  integrationContract() { return this.request('GET', '/integration/contract'); }
   listItems(query = {}) { return this.request('GET', '/work-items', undefined, { query }); }
   getItem(id) { return this.request('GET', `/work-items/${segment(id)}`); }
   getPipeline(id) { return this.request('GET', `/pipelines/${segment(id)}`); }

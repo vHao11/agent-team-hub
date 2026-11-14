@@ -4,6 +4,8 @@ import { defineTool } from '@deepseek-ai/dsh-tools';
 import { HubClient } from './client/index.mjs';
 import { LocalBridge, adapters } from './client/bridge.mjs';
 import { DshKanbanAdapter, PipelineBoardSync } from './client/board-sync.mjs';
+import { registerStdioAdapters } from './client/stdio-adapter.mjs';
+import { DshSuperagentAdapter } from './superagent-adapter.mjs';
 import { createToolDefinitions } from './tools.mjs';
 
 export const name = 'team-hub';
@@ -16,6 +18,10 @@ export const Config = Schema.object({
   clientInstanceId: Schema.string().default(''),
   timeoutMs: Schema.number().default(20000),
   boardSyncSeconds: Schema.number().default(15),
+  boardAdapter: Schema.string().default('dsh-todo-kanban'),
+  adapterConfigFile: Schema.string().default(''),
+  superagentUrl: Schema.string().default(''),
+  superagentTaskType: Schema.string().default(''),
 });
 
 export function apply(ctx, config = {}) {
@@ -26,20 +32,37 @@ export function apply(ctx, config = {}) {
   const bridge = new LocalBridge(client, { registry: adapters,
     ...(config.stateDir ? { stateDir: config.stateDir } : {}),
     ...(config.clientInstanceId ? { instanceId: config.clientInstanceId } : {}) });
-  const sync = new PipelineBoardSync(client, bridge);
+  const defaultBoard = config.boardAdapter || 'dsh-todo-kanban';
+  const syncs = new Map();
+  const boardSyncFor = (name = defaultBoard) => {
+    const selected = name || defaultBoard;
+    if (!syncs.has(selected)) syncs.set(selected, new PipelineBoardSync(client, bridge, { adapter: selected }));
+    return syncs.get(selected);
+  };
+  const sync = boardSyncFor();
   if (typeof ctx.get === 'function' && typeof ctx.effect === 'function') {
     ctx.effect(() => adapters.registerBoard('dsh-todo-kanban', new DshKanbanAdapter(() => ctx.get('todoKanbanHub'))),
       'team-hub: todo-kanban adapter');
+    if (config.adapterConfigFile) ctx.effect(() => registerStdioAdapters(config.adapterConfigFile, adapters),
+      'team-hub: external adapters');
+    if (config.superagentUrl) ctx.effect(() => adapters.registerExecutor('dsh-superagent', new DshSuperagentAdapter({
+      url: config.superagentUrl, taskType: config.superagentTaskType || '', timeout: config.timeoutMs || 20000,
+    })), 'team-hub: Superagent adapter');
     ctx.effect(() => {
-      const tick = () => sync.syncAll().catch(error => {
-        sync.lastResult = { state: 'offline', error: error.code || 'SYNC_FAILED', message: error.message };
-        void adapters.boards.get('dsh-todo-kanban')?.setSyncStatus?.('offline').catch(() => {});
-      });
+      const tick = () => {
+        for (const name of new Set([defaultBoard, ...adapters.boards.keys()])) {
+          const selected = boardSyncFor(name);
+          void selected.syncAll().catch(error => {
+            selected.lastResult = { state: 'offline', error: error.code || 'SYNC_FAILED', message: error.message };
+            void adapters.boards.get(name)?.setSyncStatus?.('offline').catch(() => {});
+          });
+        }
+      };
       void tick();
       const seconds = Math.max(5, Math.min(600, Number(config.boardSyncSeconds) || 15));
       const timer = setInterval(tick, seconds * 1000);
       return () => clearInterval(timer);
     }, 'team-hub: pipeline board sync');
   }
-  for (const tool of createToolDefinitions(defineTool, client, bridge, adapters, sync)) ctx.tools.register(tool);
+  for (const tool of createToolDefinitions(defineTool, client, bridge, adapters, sync, boardSyncFor)) ctx.tools.register(tool);
 }

@@ -37,7 +37,8 @@ def redact(text: str) -> str:
 
 
 def run(command: list[str], *, environment: dict[str, str], directory: Path, timeout: int = 180) -> subprocess.CompletedProcess:
-    result = subprocess.run(command, cwd=directory, env=environment, capture_output=True, text=True, timeout=timeout)
+    result = subprocess.run(command, cwd=directory, env=environment, capture_output=True, text=True,
+                            encoding='utf-8', errors='replace', timeout=timeout)
     if result.returncode:
         raise RuntimeError(redact(f'Command exited {result.returncode}: {result.stdout[-5000:]}\n{result.stderr[-5000:]}'))
     return result
@@ -47,9 +48,10 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--version', choices=SUPPORTED, default=SUPPORTED[-1])
     parser.add_argument('--runtime-dir', type=Path, help='Reuse an independently installed test runtime containing node_modules; no host upgrade is performed.')
+    parser.add_argument('--package', type=Path, help='Verify this specific built bundle instead of packages/dsh-plugin/dist.')
     arguments = parser.parse_args()
     manifest = json.loads((PROJECT_ROOT / 'packages/dsh-plugin/package.json').read_text())
-    tarball = PROJECT_ROOT / 'packages/dsh-plugin/dist' / f'dsh-team-hub-{manifest["version"]}.tgz'
+    tarball = arguments.package.resolve() if arguments.package else PROJECT_ROOT / 'packages/dsh-plugin/dist' / f'dsh-team-hub-{manifest["version"]}.tgz'
     if not tarball.is_file():
         raise RuntimeError('Plugin tarball is missing. Run npm pack --pack-destination dist in packages/dsh-plugin first.')
     node = shutil.which('node')

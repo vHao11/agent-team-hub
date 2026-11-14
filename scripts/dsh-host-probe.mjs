@@ -6,7 +6,8 @@ import { pathToFileURL } from 'node:url';
 
 const require = createRequire(path.join(process.env.DSH_SMOKE_RUNTIME_DIR, 'package.json'));
 const { runProfile } = await import(pathToFileURL(require.resolve('@deepseek-ai/dsh/profile-boot')));
-const { createLaunchEnvironmentSnapshot } = await import(pathToFileURL(require.resolve('@deepseek-ai/dsh-launch-environment')));
+const dshRequire = createRequire(path.join(process.env.DSH_SMOKE_RUNTIME_DIR, 'node_modules/@deepseek-ai/dsh/package.json'));
+const { createLaunchEnvironmentSnapshot } = await import(pathToFileURL(dshRequire.resolve('@deepseek-ai/dsh-launch-environment')));
 
 const environment = createLaunchEnvironmentSnapshot([{ source: 'process', values: { ...process.env } }]);
 const runtime = await runProfile({
@@ -15,8 +16,8 @@ const runtime = await runProfile({
 });
 try {
   const names = runtime.ctx.tools.definitions().map(tool => tool.name).filter(name => name.startsWith('teamhub_'));
-  assert.equal(names.length, 22);
-  assert.equal(new Set(names).size, 22);
+  assert.equal(names.length, 23);
+  assert.equal(new Set(names).size, 23);
   const status = JSON.parse(await runtime.ctx.tools.get('teamhub_status').execute({}));
   assert.equal(status.context.me.id, 'u-lin');
   assert.ok(status.client_instance_id);
@@ -25,6 +26,8 @@ try {
   assert.equal(status.adapters.boards[0].available, false);
   assert.deepEqual(status.adapters.executors, []);
   assert.equal(Object.hasOwn(status, 'host_validation'), false);
+  const contract = JSON.parse(await runtime.ctx.tools.get('teamhub_integration_contract').execute({}));
+  assert.equal(contract.local_adapter_protocol.version, 1);
   const catalog = JSON.parse(await runtime.ctx.tools.get('teamhub_catalog_search').execute({ kind: 'script' }));
   assert.equal(catalog.items.length, 1);
   console.log('TEAMHUB_HOST_SMOKE=' + JSON.stringify({

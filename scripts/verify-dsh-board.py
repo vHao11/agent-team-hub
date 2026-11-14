@@ -73,6 +73,14 @@ def main():
             'TEAMHUB_CHROME': str(args.chrome.resolve()), 'TEAMHUB_EVIDENCE_DIR': str(evidence),
             'PYTHONPATH': str(ROOT / 'server'),
         })
+        external_state = directory / 'portable-board.json'
+        external_config = directory / 'portable-adapters.json'
+        external_config.write_text(json.dumps({'schema_version': 1, 'adapters': [{
+            'name': 'portable-board', 'kind': 'board', 'command': sys.executable,
+            'args': [str(ROOT / 'examples/adapters/local-json-board.py'), str(external_state), 'portable-board'],
+        }]}), encoding='utf-8')
+        environment['TEAMHUB_EXTERNAL_ADAPTER_CONFIG'] = str(external_config)
+        environment['TEAMHUB_EXTERNAL_BOARD_STATE'] = str(external_state)
         version = run([node, str(dsh), '--version'], env=environment, cwd=directory).stdout.strip()
         print(f'正在隔离环境验证 DSH {version} 与看板源码……', flush=True)
         for package in (ROOT / 'packages/dsh-plugin', board):

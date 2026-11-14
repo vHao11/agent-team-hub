@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-team-hub:schema:adapter-wire:v1",
+  "title": "Agent Team Hub 适配器 JSON-RPC 消息 v1",
+  "oneOf": [{ "$ref": "#/$defs/request" }, { "$ref": "#/$defs/response" }],
+  "$defs": {
+    "id": { "type": "string", "minLength": 1, "maxLength": 200 },
+    "handle": {
+      "type": "object",
+      "properties": { "run_id": { "$ref": "#/$defs/id" }, "session_id": { "$ref": "#/$defs/id" }, "status": { "enum": ["queued", "starting", "running", "waiting_input"] } },
+      "anyOf": [{ "required": ["run_id"] }, { "required": ["session_id"] }]
+    },
+    "snapshot": {
+      "type": "object",
+      "required": ["schemaVersion", "externalRef", "itemId", "pipelineId", "stepKey", "attemptId", "generation", "pipelineVersion", "itemVersion", "status", "pipelineStatus", "title", "ownerTeamId", "pendingTargetTeamId", "assigneeId", "reviewerId", "sourceUpdatedAt"],
+      "properties": {
+        "schemaVersion": { "const": 1 }, "externalRef": { "type": "string", "minLength": 1 },
+        "itemId": { "$ref": "#/$defs/id" }, "pipelineId": { "$ref": "#/$defs/id" }, "stepKey": { "$ref": "#/$defs/id" }, "attemptId": { "$ref": "#/$defs/id" },
+        "generation": { "type": "integer", "minimum": 1 }, "pipelineVersion": { "type": "integer", "minimum": 1 }, "itemVersion": { "type": "integer", "minimum": 1 },
+        "status": { "enum": ["open", "accepted", "active", "review", "done", "cancelled"] },
+        "pipelineStatus": { "enum": ["draft", "active", "paused", "completed", "cancelled"] },
+        "title": { "type": "string", "minLength": 1 }, "ownerTeamId": { "$ref": "#/$defs/id" },
+        "pendingTargetTeamId": { "type": ["string", "null"] }, "assigneeId": { "type": ["string", "null"] },
+        "reviewerId": { "$ref": "#/$defs/id" }, "sourceUpdatedAt": { "type": "string", "minLength": 1 }
+      }
+    },
+    "request": {
+      "type": "object", "required": ["jsonrpc", "id", "method", "params"],
+      "properties": {
+        "jsonrpc": { "const": "2.0" }, "id": { "$ref": "#/$defs/id" },
+        "method": { "enum": ["adapter.describe", "board.upsert", "board.detach_pipeline", "execution.start", "execution.status", "execution.find", "execution.cancel"] },
+        "params": { "type": "object" }
+      },
+      "allOf": [
+        { "if": { "properties": { "method": { "const": "board.upsert" } } }, "then": { "properties": { "params": {
+          "required": ["external_ref", "workspace_ref", "item"], "properties": { "external_ref": { "type": "string", "minLength": 1 }, "workspace_ref": { "type": "string", "minLength": 1 }, "item": { "type": "object", "required": ["id"] }, "snapshot": { "$ref": "#/$defs/snapshot" }, "preferred_local_todo_id": { "$ref": "#/$defs/id" } }
+        } } } },
+        { "if": { "properties": { "method": { "const": "board.detach_pipeline" } } }, "then": { "properties": { "params": {
+          "required": ["pipeline_id", "hub_base"], "properties": { "pipeline_id": { "$ref": "#/$defs/id" }, "hub_base": { "type": "string", "minLength": 1 } }
+        } } } },
+        { "if": { "properties": { "method": { "const": "execution.start" } } }, "then": { "properties": { "params": {
+          "required": ["item_id", "run_id", "dispatch_id", "workspace_ref", "input_snapshot", "capability_releases", "spec_revision", "assignment_generation"],
+          "properties": { "item_id": { "$ref": "#/$defs/id" }, "run_id": { "$ref": "#/$defs/id" }, "dispatch_id": { "$ref": "#/$defs/id" }, "workspace_ref": { "type": "string", "minLength": 1 }, "input_snapshot": { "type": "object" }, "capability_releases": { "type": "array" }, "spec_revision": { "type": "integer", "minimum": 1 }, "assignment_generation": { "type": "integer", "minimum": 1 } }
+        } } } },
+        { "if": { "properties": { "method": { "enum": ["execution.status", "execution.cancel"] } } }, "then": { "properties": { "params": { "required": ["handle"], "properties": { "handle": { "$ref": "#/$defs/handle" } } } } } },
+        { "if": { "properties": { "method": { "const": "execution.find" } } }, "then": { "properties": { "params": { "required": ["dispatch_id"], "properties": { "dispatch_id": { "$ref": "#/$defs/id" } } } } } }
+      ]
+    },
+    "response": {
+      "type": "object", "required": ["jsonrpc", "id"],
+      "properties": { "jsonrpc": { "const": "2.0" }, "id": { "$ref": "#/$defs/id" }, "result": {}, "error": { "type": "object", "required": ["code", "message"], "properties": { "code": { "type": "integer" }, "message": { "type": "string" } } } },
+      "oneOf": [{ "required": ["result"], "not": { "required": ["error"] } }, { "required": ["error"], "not": { "required": ["result"] } }]
+    },
+    "board_result": { "type": "object", "required": ["local_todo_id"], "properties": { "local_todo_id": { "$ref": "#/$defs/id" }, "session_id": { "$ref": "#/$defs/id" }, "created": { "type": "boolean" } } },
+    "detach_result": { "type": "object", "required": ["detached"], "properties": { "detached": { "type": "integer", "minimum": 0 } } },
+    "execution_status": { "type": "object", "required": ["status"], "properties": { "status": { "enum": ["queued", "starting", "running", "waiting_input", "succeeded", "failed", "cancelled", "unknown"] }, "summary": { "type": "string" } } },
+    "cancel_result": { "type": "object", "required": ["requested", "confirmed"], "properties": { "requested": { "type": "boolean" }, "confirmed": { "type": "boolean" } } }
+  }
+}

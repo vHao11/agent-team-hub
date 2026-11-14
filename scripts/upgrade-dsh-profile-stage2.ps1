@@ -2,7 +2,9 @@
   [Parameter(Mandatory=$true)][string]$MachineFile,
   [Parameter(Mandatory=$true)][string]$PackageFile,
   [Parameter(Mandatory=$true)][string]$TeamHubHome,
-  [string]$ProxyUrl = ''
+  [string]$ProxyUrl = '',
+  [string]$CurrentVersion = '0.1.0-workbench.3bd3d820',
+  [string]$TargetVersion = '0.2.0'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -33,7 +35,8 @@ $nodeDir = Split-Path -Parent $machine.nodeExe
 $dsh = Join-Path $nodeDir 'dsh.cmd'
 if (-not (Test-Path -LiteralPath $dsh -PathType Leaf)) { throw '找不到本机 DSH 命令。' }
 $name = 'dsh-team-hub'
-$expectedVersion = '0.2.0'
+if ($CurrentVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:[-.][A-Za-z0-9.-]+)?$' -or $TargetVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:[-.][A-Za-z0-9.-]+)?$') { throw '插件版本格式无效。' }
+$expectedVersion = $TargetVersion
 if (-not (Test-Path -LiteralPath (Join-Path $base 'admin-token.txt') -PathType Leaf)) { throw '找不到本机 Team Hub 令牌文件。' }
 $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $hasBundle = @($manifest.dsh.profile.bundles) -contains $name
@@ -45,7 +48,7 @@ if ($hasBundle -or $hasDependency -or $declaredBundle -or $declaredDependency) {
   if (-not ($hasBundle -and $hasDependency -and $declaredBundle -and $declaredDependency -and (Test-Path -LiteralPath $installedPath))) { throw '检测到不完整的 Team Hub 配置，未覆盖。' }
   $installed = Get-Content -LiteralPath $installedPath -Raw -Encoding UTF8 | ConvertFrom-Json
   if ($installed.version -eq $expectedVersion) { Write-Output 'Team Hub 插件已安装，未重复修改。'; exit 0 }
-  if ($installed.version -ne '0.1.0-workbench.3bd3d820') { throw '检测到非预期的 Team Hub 版本，未覆盖。' }
+  if ($installed.version -ne $CurrentVersion) { throw '检测到非预期的 Team Hub 版本，未覆盖。' }
 }
 
 $backupRoot = Join-Path $base 'profile-backups'

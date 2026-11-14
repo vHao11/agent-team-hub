@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-team-hub:schema:adapter-config:v1",
+  "title": "Agent Team Hub 本机适配器配置 v1",
+  "type": "object",
+  "required": ["schema_version", "adapters"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "adapters": {
+      "type": "array", "maxItems": 32,
+      "items": {
+        "type": "object", "required": ["name", "kind", "command", "args"],
+        "properties": {
+          "name": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$" },
+          "kind": { "enum": ["board", "executor"] },
+          "command": { "type": "string", "minLength": 1 },
+          "args": { "type": "array", "maxItems": 64, "items": { "type": "string" } },
+          "cwd": { "type": "string", "minLength": 1 },
+          "env": { "type": "array", "maxItems": 64, "items": { "type": "string", "pattern": "^[a-zA-Z_][a-zA-Z0-9_]*$", "not": { "pattern": "^[Tt][Ee][Aa][Mm][Hh][Uu][Bb]_" } } },
+          "timeout_ms": { "type": "integer", "minimum": 100, "maximum": 120000 }
+        }
+      }
+    }
+  }
+}

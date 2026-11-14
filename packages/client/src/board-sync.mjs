@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { HubError } from './index.mjs';
@@ -13,15 +13,80 @@ export class PipelineBoardSync {
     this.queue = Promise.resolve(); this.lastResult = null;
   }
   get directory() { return path.join(this.stateDir, 'pipeline-board'); }
+  get lockFile() { return path.join(this.directory, 'locks', hash(JSON.stringify([this.client.base, this.adapter])) + '.lock'); }
   async identity() { return (await this.client.bootstrap()).me; }
-  filename(actorId, pipelineId) { return path.join(this.directory, hash(JSON.stringify([this.client.base, actorId, pipelineId])) + '.json'); }
-  async adapterService() { return this.bridge.requireAdapter(this.bridge.registry.boards, this.adapter); }
+  filename(actorId, pipelineId) {
+    // 沿用旧 DSH 文件名，其他看板独立保存订阅，避免覆盖同一流程的关联。
+    const key = [this.client.base, actorId, pipelineId];
+    if (this.adapter !== 'dsh-todo-kanban') key.push(this.adapter);
+    return path.join(this.directory, hash(JSON.stringify(key)) + '.json');
+  }
+  async adapterService() {
+    const adapter = await this.bridge.requireAdapter(this.bridge.registry.boards, this.adapter);
+    if ((await adapter.probe()).canSync === false) throw new HubError('BOARD_SYNC_UNSUPPORTED', 'This adapter does not support pipeline synchronization.');
+    return adapter;
+  }
   exclusive(fn) {
     const result = this.queue.then(fn);
     this.queue = result.then(() => undefined, () => undefined);
     return result;
   }
-  async subscribe(pipelineId, workspaceRef, { workItemId, draftId } = {}) {
+  async withLock(fn) {
+    const target = this.lockFile;
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    const owner = { pid: process.pid, nonce: randomUUID() };
+    let handle;
+    try { handle = await fs.open(target, 'wx', 0o600); }
+    catch (error) {
+      if (error.code === 'EEXIST') throw new HubError('BOARD_SYNC_BUSY', 'Another process owns this board synchronization lock.');
+      throw error;
+    }
+    try {
+      await handle.writeFile(JSON.stringify(owner));
+      await handle.close(); handle = null;
+      return await fn();
+    } finally {
+      if (handle) await handle.close();
+      const current = await fs.readFile(target, 'utf8').then(JSON.parse).catch(() => null);
+      if (current?.pid === owner.pid && current?.nonce === owner.nonce) await fs.unlink(target);
+    }
+  }
+  async releaseStaleLock() {
+    const target = this.lockFile, recovery = target + '.recovery';
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    let guard;
+    try { guard = await fs.open(recovery, 'wx', 0o600); }
+    catch (error) {
+      if (error.code === 'EEXIST') throw new HubError('BOARD_SYNC_BUSY', 'Another process is checking the synchronization lock.');
+      throw error;
+    }
+    try {
+      let metadata;
+      try {
+        const stat = await fs.lstat(target);
+        if (!stat.isFile() || stat.isSymbolicLink()) throw new HubError('INVALID_BOARD_LOCK', 'Board lock is not a regular file.');
+        metadata = JSON.parse(await fs.readFile(target, 'utf8'));
+      } catch (error) {
+        if (error.code === 'ENOENT') return { released: false };
+        if (error instanceof SyntaxError) throw new HubError('INVALID_BOARD_LOCK', 'Board lock has no verifiable owner; inspect it manually.');
+        throw error;
+      }
+      if (!Number.isSafeInteger(metadata?.pid) || metadata.pid < 1 || typeof metadata.nonce !== 'string' || !metadata.nonce) {
+        throw new HubError('INVALID_BOARD_LOCK', 'Board lock has no verifiable owner; inspect it manually.');
+      }
+      try { process.kill(metadata.pid, 0); }
+      catch (error) {
+        if (error.code !== 'ESRCH') throw new HubError('BOARD_SYNC_BUSY', 'Cannot verify that the lock owner has exited.');
+        const current = JSON.parse(await fs.readFile(target, 'utf8'));
+        if (current.pid !== metadata.pid || current.nonce !== metadata.nonce) throw new HubError('BOARD_SYNC_BUSY', 'Board lock changed during recovery.');
+        await fs.unlink(target);
+        return { released: true };
+      }
+      throw new HubError('BOARD_SYNC_BUSY', 'The process owning this board lock is still running.');
+    } finally { await guard.close(); await fs.unlink(recovery); }
+  }
+  subscribe(pipelineId, workspaceRef, { workItemId, draftId } = {}) {
+    return this.exclusive(() => this.withLock(async () => {
     if (!pipelineId || !workspaceRef || Boolean(workItemId) !== Boolean(draftId)) {
       throw new HubError('INVALID_SUBSCRIPTION', 'A pipeline, workspace and (when binding an existing draft) both item and draft IDs are required.');
     }
@@ -41,8 +106,9 @@ export class PipelineBoardSync {
         throw new HubError('SUBSCRIPTION_CONFLICT', 'This pipeline is already linked with different local settings. Unlink it first.');
       }
     }
-    const results = await this.syncAll();
+    const results = await this.syncAllUnlocked();
     return results.find(result => result.pipeline_id === pipelineId) ?? { pipeline_id: pipelineId, synced: false };
+    }));
   }
   async records(actor) {
     let names;
@@ -74,7 +140,9 @@ export class PipelineBoardSync {
         || (actor.id === item.assignee_id && actor.team_id === item.owner_team_id)
         || actor.team_id === item.pending_target_team_id;
       if (!relevant) continue;
-      const card = await adapter.ensureLinkedCard({ snapshot: this.snapshot(view, step, item),
+      const snapshot = this.snapshot(view, step, item);
+      const card = await adapter.ensureLinkedCard({ snapshot, external_ref: snapshot.externalRef,
+        item, workspace_ref: entry.workspace_ref,
         ...(entry.preferred?.[item.id] ? { draftId: entry.preferred[item.id] } : {}) });
       if (!card?.local_todo_id) throw new HubError('INVALID_ADAPTER_RESULT', 'Board did not return a stable draft ID.');
       const detail = await this.client.getItem(item.id);
@@ -99,7 +167,9 @@ export class PipelineBoardSync {
     return { pipeline_id: entry.pipeline_id, pipeline_status: view.pipeline.status, synced: true, cards: synced };
   }
   syncAll() {
-    return this.exclusive(async () => {
+    return this.exclusive(() => this.withLock(() => this.syncAllUnlocked()));
+  }
+  async syncAllUnlocked() {
       const actor = await this.identity();
       const records = await this.records(actor);
       if (!records.length) {
@@ -117,15 +187,14 @@ export class PipelineBoardSync {
         subscriptions: results.length, checked_at: new Date().toISOString(), results };
       await adapter.setSyncStatus?.(this.lastResult.state);
       return results;
-    });
   }
   async unsubscribe(pipelineId) {
-    return this.exclusive(async () => {
+    return this.exclusive(() => this.withLock(async () => {
       const actor = await this.identity();
       const file = this.filename(actor.id, pipelineId);
       let record;
       try { record = JSON.parse(await fs.readFile(file, 'utf8')); } catch (error) { if (error.code === 'ENOENT') return { pipeline_id: pipelineId, removed: false }; throw error; }
-      if (record.base !== this.client.base || record.actor_id !== actor.id || record.pipeline_id !== pipelineId) throw new HubError('SUBSCRIPTION_CONFLICT', 'Subscription identity does not match.');
+      if (record.base !== this.client.base || record.actor_id !== actor.id || record.pipeline_id !== pipelineId || record.adapter !== this.adapter) throw new HubError('SUBSCRIPTION_CONFLICT', 'Subscription identity does not match.');
       // A second identity sharing this state directory may still need the same card.
       for (const name of (await fs.readdir(this.directory)).filter(value => /^[a-f0-9]{64}\.json$/.test(value))) {
         const otherFile = path.join(this.directory, name);
@@ -137,10 +206,14 @@ export class PipelineBoardSync {
         }
       }
       const adapter = await this.adapterService();
+      if (typeof adapter.detachPipeline !== 'function' || (await adapter.probe()).canDetach === false) {
+        await fs.unlink(file);
+        return { pipeline_id: pipelineId, removed: true, detached: 0, retained_external_links: true };
+      }
       const detached = await adapter.detachPipeline({ pipelineId, hubBase: this.client.base });
       await fs.unlink(file);
       return { pipeline_id: pipelineId, removed: true, detached: detached.detached };
-    });
+    }));
   }
 }
 
@@ -154,7 +227,7 @@ export class DshKanbanAdapter {
     }
     return service;
   }
-  async probe() { try { this.service(); return { available: true, version: '1', canSync: true }; } catch (error) { return { available: false, reason: error.message }; } }
+  async probe() { try { this.service(); return { available: true, protocol_version: 1, kind: 'board', version: '1', canSync: true, canLinkItem: false, canDetach: true }; } catch (error) { return { available: false, reason: error.message }; } }
   async ensureLinkedCard(input) {
     if (!input?.snapshot) throw new HubError('PIPELINE_LINK_REQUIRED', 'Use teamhub_pipeline_link for a pipeline work item.');
     return this.service().ensureLinkedCard(input);

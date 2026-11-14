@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:agent-team-hub:schema:adapter-description:v1",
+  "title": "Agent Team Hub 适配器能力声明 v1",
+  "type": "object",
+  "required": ["protocol", "protocol_version", "name", "kind", "version", "available", "capabilities"],
+  "properties": {
+    "protocol": { "const": "agent-team-hub-adapter" },
+    "protocol_version": { "const": 1 },
+    "name": { "type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,99}$" },
+    "kind": { "enum": ["board", "executor"] },
+    "version": { "type": "string", "minLength": 1 },
+    "available": { "type": "boolean" },
+    "capabilities": { "type": "object" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "board" } }, "required": ["kind"] },
+      "then": { "properties": { "capabilities": { "required": ["item_link", "pipeline_sync", "detach_pipeline"], "properties": { "item_link": { "type": "boolean" }, "pipeline_sync": { "type": "boolean" }, "detach_pipeline": { "type": "boolean" } } } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "executor" } }, "required": ["kind"] },
+      "then": { "properties": { "capabilities": { "required": ["start", "status", "cancel", "recover"], "properties": { "start": { "type": "boolean" }, "status": { "type": "boolean" }, "cancel": { "type": "boolean" }, "recover": { "type": "boolean" } } } } }
+    },
+    {
+      "if": { "properties": { "kind": { "const": "executor" }, "available": { "const": true } }, "required": ["kind", "available"] },
+      "then": { "properties": { "capabilities": { "properties": { "start": { "const": true }, "status": { "const": true } } } } }
+    }
+  ]
+}

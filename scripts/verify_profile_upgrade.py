@@ -32,9 +32,11 @@ def main():
     parser.add_argument('--old-plugin-dir', type=Path, required=True)
     parser.add_argument('--pnpm-compat-dir', type=Path, required=True)
     parser.add_argument('--new-package', type=Path, required=True)
+    parser.add_argument('--old-version', default='0.1.0-workbench.3bd3d820')
+    parser.add_argument('--new-version', default='0.2.0')
     args = parser.parse_args()
     runtime, old_plugin = args.runtime_dir.resolve(), args.old_plugin_dir.resolve()
-    if json.loads((old_plugin / 'package.json').read_text(encoding='utf-8'))['version'] != '0.1.0-workbench.3bd3d820':
+    if json.loads((old_plugin / 'package.json').read_text(encoding='utf-8'))['version'] != args.old_version:
         raise RuntimeError('Unexpected old plugin version')
     node, dsh = runtime / 'node.exe', runtime / 'node_modules/@deepseek-ai/dsh/lib/bin.js'
     npm = runtime / 'node_modules/npm/bin/npm-cli.js'
@@ -73,7 +75,8 @@ def main():
             machine_file.write_text(json.dumps(machine), encoding='utf-8')
             command = ['powershell.exe', '-NoLogo', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
                        str(ROOT / 'scripts/upgrade-dsh-profile-stage2.ps1'), '-MachineFile', str(machine_file),
-                       '-PackageFile', str(args.new_package.resolve()), '-TeamHubHome', str(local)]
+                       '-PackageFile', str(args.new_package.resolve()), '-TeamHubHome', str(local),
+                       '-CurrentVersion', args.old_version, '-TargetVersion', args.new_version]
             running = run(command, cwd=root, env=env, success=False)
             if 'DSH 仍在运行' not in running.stderr:
                 raise RuntimeError('Running-profile guard did not report the expected reason')
@@ -87,15 +90,20 @@ def main():
         if digest(package_json) != before:
             raise RuntimeError('Dirty-workbench guard changed the profile')
         dirty.unlink()
+        wrong_version = list(command)
+        wrong_version[wrong_version.index('-CurrentVersion') + 1] = '9.9.9'
+        refused = run(wrong_version, cwd=root, env=env, success=False)
+        if '检测到非预期的 Team Hub 版本' not in refused.stderr or profile_snapshot() != original_profile:
+            raise RuntimeError('Unexpected current version was not rejected without changes')
         bad_command = list(command)
         bad_command[bad_command.index('-PackageFile') + 1] = str(old_package)
         failed = run(bad_command, cwd=root, env=env, success=False)
         if '安装后的插件版本不正确' not in failed.stderr:
             raise RuntimeError('Rollback test did not reach the installed-version check')
-        if profile_snapshot() != original_profile or json.loads(installed.read_text(encoding='utf-8'))['version'] != '0.1.0-workbench.3bd3d820':
+        if profile_snapshot() != original_profile or json.loads(installed.read_text(encoding='utf-8'))['version'] != args.old_version:
             raise RuntimeError('Failed installation did not restore the old profile')
         run(command, cwd=root, env=env)
-        if json.loads(installed.read_text(encoding='utf-8'))['version'] != '0.2.0':
+        if json.loads(installed.read_text(encoding='utf-8'))['version'] != args.new_version:
             raise RuntimeError('Expected plugin version was not installed')
         after = digest(package_json)
         run(command, cwd=root, env=env)
@@ -104,7 +112,7 @@ def main():
         backups = list((local / 'profile-backups').glob('*/package.json'))
         if not backups or all(digest(value) != before for value in backups):
             raise RuntimeError('Original profile backup was not retained')
-        print(json.dumps({'result': 'passed', 'running_guard': True, 'dirty_guard': True, 'failed_install_rollback': True,
+        print(json.dumps({'result': 'passed', 'running_guard': True, 'dirty_guard': True, 'version_guard': True, 'failed_install_rollback': True,
                           'upgrade': True, 'repeat_noop': True, 'profile_backup': True, 'production_modified': False}))
 
 

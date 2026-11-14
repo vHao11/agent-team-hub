@@ -27,7 +27,7 @@ for module in (connection, harness_config, mcp_server):
 config = tomllib.loads(harness_config.render_config('codex'))
 assert config['mcp_servers']['agent-team-hub']['args'] == ['-m', 'teamhub.mcp_server']
 mcp_tools = asyncio.run(mcp_server.build_server(url='http://127.0.0.1:8765', token='wheel-probe-only').list_tools())
-assert len(mcp_tools) >= 47
+assert len(mcp_tools) >= 48
 with TestClient(create_app(root / 'data', demo=True)) as client:
     html = client.get('/')
     assert html.status_code == 200 and 'Team Hub' in html.text

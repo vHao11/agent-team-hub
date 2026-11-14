@@ -4,14 +4,16 @@ import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { AdapterRegistry, LocalBridge } from '../src/bridge.mjs';
+import { HubError } from '../src/index.mjs';
 
 async function fixture(t, adapter) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'hub-bridge-')); t.after(() => fs.rm(dir, { recursive: true, force: true }));
-  let current = { id: 'run-1', dispatch_id: 'dispatch-1', sequence: 0, status: 'queued', spec_revision: 2,
+  let current = { id: 'run-1', dispatch_id: 'dispatch-1', requested_by: 'member-1', client_instance_id: 'instance-1', sequence: 0, status: 'queued', spec_revision: 2,
     assignment_generation: 3, input_snapshot: { title: 'Frozen task', description: 'Frozen scope', acceptance_spec: ['Check API compatibility'], spec_revision: 2 },
     capability_releases: [{ release_id: 'release-1', capability_id: 'cap-1', version: '0.1.0' }] };
   const initial = structuredClone(current), calls = [];
   const client = { base: 'http://hub/api/v1',
+    async bootstrap() { return { me: { id: 'member-1' } }; },
     async createRun(id, data) { calls.push({ type: 'create', data }); return structuredClone(initial); },
     async getRun() { return structuredClone(current); },
     async reportRun(id, data) { calls.push({ type: 'report', data }); assert.ok(data.sequence > current.sequence); current = { ...current, ...data }; return structuredClone(current); },
@@ -32,7 +34,7 @@ test('a repeated launch receipt starts the external runtime once and preserves p
   let starts = 0, releases, dispatch;
   const f = await fixture(t, { async probe() { return { available: true }; }, async start(input) { starts++; releases = input.capability_releases; dispatch = input; return { session_id: 'real-session' }; }, async getStatus() { return { status: 'succeeded', summary: 'Verified result' }; } });
   const first = await f.bridge.start('work-1', f.input), second = await f.bridge.start('work-1', f.input);
-  assert.equal(starts, 1); assert.equal(first.run.status, 'running'); assert.equal(second.run.external_session_id, 'real-session');
+  assert.equal(starts, 1); assert.equal(first.run.status, 'starting'); assert.equal(second.run.external_session_id, 'real-session');
   assert.equal(releases[0].version, '0.1.0');
   assert.equal(dispatch.input_snapshot.title, 'Frozen task'); assert.equal(dispatch.spec_revision, 2); assert.equal(dispatch.assignment_generation, 3);
   const reconciled = await f.bridge.reconcile('dispatch-1'); assert.equal(reconciled.run.status, 'succeeded');
@@ -68,4 +70,52 @@ test('board binding uses the host stable card id and a shared external reference
   f.registry.registerBoard('my-board', { async probe() { return { available: true }; }, async ensureLinkedCard(input) { externalRef = input.external_ref; return { local_todo_id: 'persistent-card-8' }; } });
   await f.bridge.linkBoard('work-1', { adapter: 'my-board', workspace_ref: '/work/project', operation_id: 'bind-1' });
   assert.equal(externalRef, 'http://hub/api/v1:work-1'); assert.equal(binding.local_todo_id, 'persistent-card-8'); assert.equal(binding.client_instance_id, 'instance-1');
+});
+
+test('pipeline execution keeps the explicit attempt and generation on the Hub request', async t => {
+  const f = await fixture(t, { async probe() { return { available: true, protocol_version: 1 }; },
+    async start() { return { run_id: 'host-run', status: 'queued' }; }, async getStatus() { return { status: 'queued' }; } });
+  const result = await f.bridge.start('work-1', { ...f.input, pipeline_attempt_id: 'attempt-2', pipeline_generation: 3 });
+  assert.equal(result.run.status, 'queued');
+  assert.equal(f.calls[0].data.pipeline_attempt_id, 'attempt-2');
+  assert.equal(f.calls[0].data.pipeline_generation, 3);
+});
+
+test('another member cannot control an existing local execution after credentials change', async t => {
+  let statusCalls = 0, cancelCalls = 0;
+  const f = await fixture(t, { async probe() { return { available: true }; }, async start() { return { run_id: 'host-run' }; },
+    async getStatus() { statusCalls++; return { status: 'running' }; }, async cancel() { cancelCalls++; return { confirmed: true }; } });
+  await f.bridge.start('work-1', f.input);
+  f.client.bootstrap = async () => ({ me: { id: 'different-member' } });
+  await assert.rejects(f.bridge.reconcile('dispatch-1'), { code: 'DISPATCH_IDENTITY_MISMATCH' });
+  await assert.rejects(f.bridge.cancel('dispatch-1'), { code: 'DISPATCH_IDENTITY_MISMATCH' });
+  assert.equal(statusCalls, 0); assert.equal(cancelCalls, 0);
+});
+
+test('cancelling a finished run never calls the host cancellation method', async t => {
+  let calls = 0;
+  const f = await fixture(t, { async probe() { return { available: true }; }, async start() { return { run_id: 'host-run' }; },
+    async getStatus() { return { status: 'succeeded' }; }, async cancel() { calls++; return { requested: true, confirmed: true }; } });
+  await f.bridge.start('work-1', f.input);
+  await f.bridge.reconcile('dispatch-1');
+  f.client.cancelRun = async () => f.client.getRun();
+  const result = await f.bridge.cancel('dispatch-1');
+  assert.equal(result.run.status, 'succeeded'); assert.equal(result.requested, false); assert.equal(calls, 0);
+});
+
+test('a confirmed pre-launch refusal marks the reserved run failed without starting the host', async t => {
+  const f = await fixture(t, { async probe() { return { available: true }; },
+    async start() { throw new HubError('ADAPTER_PRECONDITION_FAILED', 'Unsupported pinned tools.'); },
+    async getStatus() { throw new Error('not called'); } });
+  await assert.rejects(f.bridge.start('work-1', f.input), { code: 'ADAPTER_PRECONDITION_FAILED' });
+  assert.equal((await f.client.getRun()).status, 'failed');
+});
+
+test('maximum-length operation IDs still allow follow-up execution reports', async t => {
+  const f = await fixture(t, { async probe() { return { available: true }; },
+    async start() { return { run_id: 'host-run' }; }, async getStatus() { return { status: 'running' }; } });
+  await f.bridge.start('work-1', { ...f.input, operation_id: 'x'.repeat(200) });
+  const report = f.calls.find(value => value.type === 'report');
+  assert.ok(report.data.operation_id.length <= 200);
+  assert.match(report.data.operation_id, /^local-started-/);
 });

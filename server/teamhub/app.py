@@ -17,6 +17,7 @@ from starlette.exceptions import HTTPException
 
 from . import __version__, db as m, schemas as s
 from .bootstrap import DEMO_IDENTITIES, ensure_mode, seed_demo
+from .integration_contract import integration_contract
 from .service import DomainError, Hub, now, row, uid
 
 logger = logging.getLogger('teamhub')
@@ -105,6 +106,10 @@ def create_app(data_dir: str | Path = '.teamhub', demo: bool = False) -> FastAPI
     @app.get(base + '/bootstrap', tags=['Workspace'])
     def bootstrap(actor: Actor):
         return hub.bootstrap(actor)
+
+    @app.get(base + '/integration/contract', tags=['Integration'])
+    def get_integration_contract(actor: Actor):
+        return integration_contract()
 
     @app.get(base + '/auth/me', tags=['Workspace'])
     def whoami(actor: Actor):

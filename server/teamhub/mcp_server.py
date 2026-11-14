@@ -248,6 +248,11 @@ def build_server(url: str | None = None, token: str | None = None,
         return await request("GET", "/bootstrap")
 
     @server.tool(annotations=readonly)
+    async def hub_integration_contract() -> dict:
+        """读取 Hub 支持的业务传输、适配器协议版本和执行语义；不代表某个本机适配器已安装。"""
+        return await request("GET", "/integration/contract")
+
+    @server.tool(annotations=readonly)
     async def hub_events(after: int = 0, limit: int = 100) -> dict:
         """按游标读取工作空间事件（最多 500 条）；事件回放不会启动任何执行。"""
         return await request("GET", "/events", params={"after": after, "limit": limit})

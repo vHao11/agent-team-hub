@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import { promises as fs } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { AdapterRegistry, LocalBridge } from '../src/bridge.mjs';
 import { PipelineBoardSync } from '../src/board-sync.mjs';
 
@@ -91,4 +93,69 @@ test('unlinking one identity retains the board association while another identit
     { pipeline_id: 'pipe-1', removed: true, detached: 0, retained_for_other_subscribers: true });
   f.setActor({ id: 'receiver', team_id: 'team-b' });
   assert.deepEqual(await f.sync.unsubscribe('pipe-1'), { pipeline_id: 'pipe-1', removed: true, detached: 1 });
+});
+
+test('two different board adapters keep independent subscriptions for the same pipeline', async t => {
+  const f = await fixture(t);
+  const cards = new Map();
+  const other = { async probe() { return { available: true, protocol_version: 1 }; },
+    async ensureLinkedCard({ snapshot, workspace_ref }) {
+      assert.equal(workspace_ref, '/workspace');
+      cards.set(snapshot.externalRef, snapshot);
+      return { local_todo_id: 'second-board-card' };
+    } };
+  const registry = f.sync.bridge.registry;
+  registry.registerBoard('other-board', other);
+  const sync = new PipelineBoardSync(f.client, f.sync.bridge, { adapter: 'other-board' });
+  assert.equal((await f.sync.subscribe('pipe-1', '/workspace')).synced, true);
+  assert.equal((await sync.subscribe('pipe-1', '/workspace')).synced, true);
+  assert.equal((await fs.readdir(path.join(f.stateDir, 'pipeline-board'))).filter(name => name.endsWith('.json')).length, 2);
+  assert.equal((await f.sync.syncAll())[0].cards[0].local_todo_id, 'draft-1');
+  assert.equal((await sync.syncAll())[0].cards[0].local_todo_id, 'second-board-card');
+  assert.equal((await sync.unsubscribe('pipe-1')).retained_external_links, true);
+  assert.equal((await f.sync.syncAll())[0].synced, true);
+});
+
+test('concurrent processes cannot unlink while a board sync is in progress', async t => {
+  const f = await fixture(t);
+  await f.sync.subscribe('pipe-1', '/workspace');
+  const other = new PipelineBoardSync(f.client, f.sync.bridge);
+  const adapter = f.sync.bridge.registry.boards.get('dsh-todo-kanban');
+  const original = adapter.ensureLinkedCard;
+  let release, entered;
+  const waiting = new Promise(resolve => { entered = resolve; });
+  const resume = new Promise(resolve => { release = resolve; });
+  adapter.ensureLinkedCard = async input => { entered(); await resume; return original(input); };
+  const syncing = f.sync.syncAll();
+  await waiting;
+  await assert.rejects(other.unsubscribe('pipe-1'), { code: 'BOARD_SYNC_BUSY' });
+  release();
+  assert.equal((await syncing)[0].synced, true);
+  assert.equal((await other.unsubscribe('pipe-1')).removed, true);
+});
+
+test('lock recovery refuses a live owner and can remove a verified dead process lock', async t => {
+  const f = await fixture(t);
+  await fs.mkdir(path.dirname(f.sync.lockFile), { recursive: true });
+  await fs.writeFile(f.sync.lockFile, JSON.stringify({ pid: process.pid, nonce: 'active' }));
+  await assert.rejects(f.sync.releaseStaleLock(), { code: 'BOARD_SYNC_BUSY' });
+  assert.equal(JSON.parse(await fs.readFile(f.sync.lockFile, 'utf8')).nonce, 'active');
+  const child = spawnSync(process.execPath, ['-e', ''], { windowsHide: true });
+  assert.equal(child.status, 0);
+  await fs.writeFile(f.sync.lockFile, JSON.stringify({ pid: child.pid, nonce: 'exited' }));
+  assert.deepEqual(await f.sync.releaseStaleLock(), { released: true });
+  assert.equal((await f.sync.subscribe('pipe-1', '/workspace')).synced, true);
+});
+
+test('legacy DSH subscription files continue to reconcile without migration', async t => {
+  const f = await fixture(t);
+  const directory = path.join(f.stateDir, 'pipeline-board');
+  await fs.mkdir(directory, { recursive: true });
+  const key = createHash('sha256').update(JSON.stringify([f.client.base, 'requester', 'pipe-1'])).digest('hex');
+  await fs.writeFile(path.join(directory, key + '.json'), JSON.stringify({ schema_version: 1, base: f.client.base,
+    actor_id: 'requester', pipeline_id: 'pipe-1', workspace_ref: '/workspace', adapter: 'dsh-todo-kanban', linked: {}, preferred: {} }));
+  const result = await f.sync.syncAll();
+  assert.equal(result[0].synced, true);
+  assert.equal(result[0].cards[0].local_todo_id, 'draft-1');
+  assert.equal(JSON.parse(await fs.readFile(path.join(directory, key + '.json'), 'utf8')).linked['work-1'], 'draft-1');
 });

@@ -11,6 +11,8 @@ import json
 import os
 from pathlib import Path
 import socket
+import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -89,6 +91,8 @@ def test_mcp_only_delivery_review_and_shared_toolset(live_hub, tmp_path):
                 tools = (await requester.list_tools()).tools
                 assert len(tools) >= 47
                 assert (await call(requester, "hub_context"))["me"]["id"] == "u-lin"
+                contract = await call(requester, "hub_integration_contract")
+                assert contract["version"] == 1 and contract["local_adapter_protocol"]["version"] == 1
                 capability = await call(assignee, "catalog_publish", operation_id="mcp-capability",
                     slug="clearing/mcp-checklist", name="MCP 测试交付清单", kind="skill", tags=["test"])
                 release = await call(assignee, "catalog_publish_release", capability_id=capability["id"],
@@ -273,5 +277,125 @@ def test_mcp_serial_pipeline_across_teams(live_hub):
                         view = await call(requester, 'pipeline_get', pipeline_id=pipeline_id)
                     assert view['pipeline']['status'] == 'completed'
                     assert view['steps'][1]['attempt']['input_snapshot']['upstream_deliveries'][0]['work_item_id'] == view['steps'][0]['item']['id']
+
+    asyncio.run(exercise())
+
+
+def test_cross_language_adapters_with_real_hub_and_cross_team_pipeline(live_hub, tmp_path):
+    node = shutil.which('node')
+    assert node, 'Node is required for the CLI integration test'
+    board_path, executor_path = tmp_path / 'board.json', tmp_path / 'executor.json'
+    config_path = tmp_path / 'adapters.json'
+    config_path.write_text(json.dumps({'schema_version': 1, 'adapters': [
+        {'name': 'portable-board', 'kind': 'board', 'command': sys.executable,
+         'args': [str(ROOT / 'examples/adapters/local-json-board.py'), str(board_path), 'portable-board']},
+        {'name': 'portable-executor', 'kind': 'executor', 'command': sys.executable,
+         'args': [str(ROOT / 'tests/fixtures/stdio-executor.py'), str(executor_path), 'portable-executor', 'lose-first-response']},
+    ]}), encoding='utf-8')
+    env = {key: value for key, value in os.environ.items() if not key.startswith('TEAMHUB_')}
+    env.update(TEAMHUB_URL=live_hub, TEAMHUB_STATE_DIR=str(tmp_path / 'bridge'))
+
+    def cli(token, *args, data=None, expect_error=None):
+        command = [node, str(ROOT / 'packages/cli/bin/teamhub.mjs'), *args,
+                   '--adapter-config', str(config_path), '--instance', 'shared-test-device']
+        if data is not None:
+            command += ['--data', json.dumps(data)]
+        result = subprocess.run(command, cwd=ROOT, env={**env, 'TEAMHUB_TOKEN': token},
+                                capture_output=True, text=True, encoding='utf-8', timeout=30)
+        if expect_error:
+            assert result.returncode != 0
+            error = json.loads(result.stderr)['error']
+            assert error['code'] == expect_error, error
+            return error
+        assert result.returncode == 0, result.stderr
+        return json.loads(result.stdout)
+
+    def board_cards():
+        return json.loads(board_path.read_text(encoding='utf-8'))['cards']
+
+    async def exercise():
+        discovered = cli('demo-lin', 'adapters', 'list')
+        assert discovered['boards'][0]['available'] and discovered['executors'][0]['available']
+        async with mcp_session(live_hub, 'demo-lin') as requester:
+            async with mcp_session(live_hub, 'demo-chen') as implementer:
+                async with mcp_session(live_hub, 'demo-xu') as tester:
+                    definition = {
+                        'roles': [{'key': 'dev', 'label': '开发组', 'kind': 'team'},
+                                  {'key': 'qa', 'label': '测试组', 'kind': 'team'},
+                                  {'key': 'reviewer', 'label': '验收人', 'kind': 'reviewer'}],
+                        'steps': [{'key': 'develop', 'name': '开发', 'team_role': 'dev', 'reviewer_role': 'reviewer',
+                                   'acceptance_spec': ['提交说明'], 'required_artifact_kinds': ['document']},
+                                  {'key': 'verify', 'name': '验证', 'team_role': 'qa', 'reviewer_role': 'reviewer',
+                                   'acceptance_spec': ['提交结果'], 'required_artifact_kinds': ['report']}],
+                    }
+                    draft = await call(requester, 'workflow_template_create', operation_id='adapter-flow-template', name='通用适配器验证', definition=definition)
+                    version = await call(requester, 'workflow_template_publish', template_id=draft['id'],
+                                         operation_id='adapter-flow-publish', expected_revision=draft['draft_revision'])
+                    view = await call(requester, 'pipeline_create', operation_id='adapter-flow-create', title='跨组适配器验证',
+                                      project_id='proj-interface', template_version_id=version['id'],
+                                      role_bindings={'dev': 'team-clearing', 'qa': 'team-qa', 'reviewer': 'u-lin'})
+                    view = await call(requester, 'pipeline_control', pipeline_id=view['pipeline']['id'],
+                                      operation_id='adapter-flow-start', expected_version=view['pipeline']['version'], action='start')
+                    pipeline = view['pipeline']['id']
+                    link_args = ('pipelines', 'link', pipeline, '--adapter', 'portable-board', '--workspace-ref', str(tmp_path))
+                    first = cli('demo-lin', *link_args)
+                    assert first['synced'] and len(first['cards']) == 1, first
+                    assert cli('demo-lin', *link_args)['cards'][0]['local_todo_id'] == first['cards'][0]['local_todo_id']
+                    assert len(board_cards()) == 1
+                    board = json.loads(board_path.read_text(encoding='utf-8'))
+                    board['cards'][0]['title'], board['cards'][0]['notes'] = '本地标题', '本地备注'
+                    board_path.write_text(json.dumps(board, ensure_ascii=False), encoding='utf-8')
+                    view = await call(requester, 'pipeline_control', pipeline_id=pipeline, operation_id='adapter-flow-pause',
+                                      expected_version=view['pipeline']['version'], action='pause')
+                    cli('demo-lin', 'pipelines', 'sync', '--adapter', 'portable-board')
+                    assert board_cards()[0]['hub']['pipelineStatus'] == 'paused'
+                    view = await call(requester, 'pipeline_control', pipeline_id=pipeline, operation_id='adapter-flow-resume',
+                                      expected_version=view['pipeline']['version'], action='resume')
+                    for index, member in enumerate((implementer, tester)):
+                        step = view['steps'][index]
+                        context = {'pipeline_attempt_id': step['attempt']['id'], 'pipeline_generation': view['pipeline']['generation']}
+                        item = await call(member, 'pipeline_step_command', work_item_id=step['item']['id'],
+                                          operation_id=f'adapter-accept-{index}', expected_version=step['item']['version'], action='accept', **context)
+                        token = 'demo-chen' if index == 0 else 'demo-xu'
+                        error = cli(token, 'runs', 'start', item['id'], '--adapter', 'portable-executor',
+                                    '--workspace-ref', str(tmp_path), '--version', str(item['version']),
+                                    '--operation-id', f'adapter-run-{index}', data=context, expect_error='LAUNCH_UNCERTAIN')
+                        dispatch = error['details']['dispatch_id']
+                        assert cli(token, 'runs', 'reconcile', dispatch)['run']['status'] == 'queued'
+                        host = json.loads(executor_path.read_text(encoding='utf-8'))
+                        assert host['starts'] == index + 1
+                        assert host['runs'][dispatch]['input_snapshot']['pipeline_attempt_id'] == context['pipeline_attempt_id']
+                        if index == 0:
+                            cli('demo-lin', 'runs', 'cancel-execution', dispatch, expect_error='DISPATCH_IDENTITY_MISMATCH')
+                            assert 'cancel_requested' not in host['runs'][dispatch]
+                            host['runs'][dispatch]['status'] = 'succeeded'
+                        else:
+                            cancel = cli(token, 'runs', 'cancel-execution', dispatch, '--operation-id', 'adapter-cancel')
+                            assert cancel['run']['status'] == 'cancel_requested' and not cancel['confirmed']
+                            host = json.loads(executor_path.read_text(encoding='utf-8'))
+                            host['runs'][dispatch]['status'] = 'cancelled'
+                        executor_path.write_text(json.dumps(host), encoding='utf-8')
+                        expected = 'succeeded' if index == 0 else 'cancelled'
+                        assert cli(token, 'runs', 'reconcile', dispatch)['run']['status'] == expected
+                        detail = await call(member, 'ledger_get', work_item_id=item['id'])
+                        assert detail['item']['status'] == 'active'
+                        artifact = await call(member, 'artifact_upload_text', filename=f'adapter-{index}.txt', content='模拟流程验收材料')
+                        delivery = await call(member, 'pipeline_step_submit', work_item_id=item['id'],
+                                              operation_id=f'adapter-submit-{index}', expected_version=detail['item']['version'],
+                                              spec_revision=item['spec_revision'], summary='已提交',
+                                              artifacts=[{'label': '结果', 'url': artifact['url'],
+                                                          'kind': 'document' if index == 0 else 'report'}], **context)
+                        detail = await call(requester, 'ledger_get', work_item_id=item['id'])
+                        await call(requester, 'pipeline_step_review', delivery_id=delivery['id'],
+                                   operation_id=f'adapter-review-{index}', expected_version=detail['item']['version'],
+                                   decision='approve', **context)
+                        view = await call(requester, 'pipeline_get', pipeline_id=pipeline)
+                        cli('demo-lin', 'pipelines', 'sync', '--adapter', 'portable-board')
+                    assert view['pipeline']['status'] == 'completed'
+                    assert len(board_cards()) == 2 and all(card['hub']['status'] == 'done' for card in board_cards())
+                    assert board_cards()[0]['title'] == '本地标题' and board_cards()[0]['notes'] == '本地备注'
+                    unlinked = cli('demo-lin', 'pipelines', 'unlink', pipeline, '--adapter', 'portable-board')
+                    assert unlinked['detached'] == 2
+                    assert len(board_cards()) == 2 and all('hub' not in card for card in board_cards())
 
     asyncio.run(exercise())

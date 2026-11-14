@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import { randomUUID } from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
+import { promises as fs } from 'node:fs';
 import { HubClient } from '../packages/client/src/index.mjs';
 
 const require = createRequire(path.join(process.env.DSH_SMOKE_RUNTIME_DIR, 'package.json'));
@@ -27,10 +28,16 @@ const definitions = {
     { key: 'test', name: '验证', team_role: 'test', reviewer_role: 'review', acceptance_spec: ['提交报告'], required_artifact_kinds: ['document'] }],
 };
 let browser, page;
+let unregisterExternal;
 try {
   assert.equal(runtime.ctx.get('todoKanbanHub')?.apiVersion, 1, '看板 Cordis 服务未加载');
+  const clientDir = path.join(process.env.DSH_HOME, 'profiles/web/node_modules/dsh-team-hub/lib/client');
+  const { adapters } = await import(pathToFileURL(path.join(clientDir, 'bridge.mjs')));
+  const { registerStdioAdapters } = await import(pathToFileURL(path.join(clientDir, 'stdio-adapter.mjs')));
+  unregisterExternal = registerStdioAdapters(process.env.TEAMHUB_EXTERNAL_ADAPTER_CONFIG, adapters);
   const status = JSON.parse(await runtime.ctx.tools.get('teamhub_status').execute({}));
   assert.equal(status.adapters.boards.find(value => value.name === 'dsh-todo-kanban')?.available, true);
+  assert.equal(status.adapters.boards.find(value => value.name === 'portable-board')?.available, true);
   const template = await lin.request('POST', '/workflow-templates', { operation_id: op(), name: '隔离测试模板', definition: definitions });
   const version = await lin.request('POST', `/workflow-templates/${template.id}/publish`, { operation_id: op(), expected_revision: template.draft_revision });
   let view = await lin.request('POST', '/pipelines', { operation_id: op(), title: '隔离跨组流水线', project_id: 'proj-interface',
@@ -44,6 +51,8 @@ try {
   const firstId = linked.cards[0].local_todo_id;
   const repeated = JSON.parse(await link.execute({ pipeline_id: pipelineId, workspace_ref: 'isolated-workspace' }));
   assert.equal(repeated.cards[0].local_todo_id, firstId);
+  const external = JSON.parse(await link.execute({ pipeline_id: pipelineId, workspace_ref: 'isolated-workspace', adapter: 'portable-board' }));
+  assert.equal(external.synced, true, JSON.stringify(external));
 
   browser = await chromium.launch({ headless: true, executablePath: process.env.TEAMHUB_CHROME });
   page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
@@ -88,6 +97,9 @@ try {
   await lin.reviewDelivery(delivery.id, { operation_id: op(), expected_version: view.steps[0].item.version,
     decision: 'approve', ...context(view.steps[0]) });
   await refresh();
+  await sync.execute({ adapter: 'portable-board' });
+  let externalBoard = JSON.parse(await fs.readFile(process.env.TEAMHUB_EXTERNAL_BOARD_STATE, 'utf8'));
+  assert.deepEqual(externalBoard.cards.map(card => card.hub.status), ['done', 'open']);
   const afterApprove = JSON.parse(await sync.execute({}));
   const secondId = afterApprove.find(value => value.pipeline_id === pipelineId).cards.find(value => value.work_item_id === view.steps[1].item.id).local_todo_id;
   assert.equal((await cardIn('done', firstId)).hub.status, 'done');
@@ -98,6 +110,10 @@ try {
   await lin.reviewDelivery(delivery.id, { operation_id: op(), expected_version: view.steps[1].item.version,
     decision: 'approve', ...context(view.steps[1]) });
   await refresh(); await sync.execute({});
+  await sync.execute({ adapter: 'portable-board' });
+  externalBoard = JSON.parse(await fs.readFile(process.env.TEAMHUB_EXTERNAL_BOARD_STATE, 'utf8'));
+  assert.equal(externalBoard.cards.length, 2);
+  assert.ok(externalBoard.cards.every(card => card.hub.status === 'done'));
   assert.equal(view.pipeline.status, 'completed');
   assert.equal((await cardIn('done', secondId)).hub.status, 'done');
   const boardSnapshot = await board();
@@ -134,13 +150,14 @@ try {
   await page.screenshot({ path: path.join(process.env.TEAMHUB_EVIDENCE_DIR, 'dsh-board-mobile.png') });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
   assert.deepEqual(errors, []);
-  console.log('TEAMHUB_DSH_BOARD=' + JSON.stringify({ status: 'passed', adapter: 'todoKanbanHub', teams: 2, members: 3,
+  console.log('TEAMHUB_DSH_BOARD=' + JSON.stringify({ status: 'passed', adapter: 'todoKanbanHub', external_adapter: 'portable-board', teams: 2, members: 3,
     cards: cards.length, automatic_sync: true, rework: true, duplicate_link: false, pipeline_status: view.pipeline.status,
     dsh_viewports: ['1440x900', '390x844'], browser_errors: errors.length }));
 } catch (error) {
   if (page) await page.screenshot({ path: path.join(process.env.TEAMHUB_EVIDENCE_DIR, 'dsh-board-failure.png') }).catch(() => {});
   throw error;
 } finally {
+  unregisterExternal?.();
   if (browser) await browser.close();
   await runtime.shutdown.shutdown(0);
 }

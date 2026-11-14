@@ -1,5 +1,5 @@
 /** Tool shape follows DSH docs/user/develop/basic/tool.md at 0.2.2-rc.2. */
-export function createToolDefinitions(defineTool, client, bridge, registry, boardSync = null) {
+export function createToolDefinitions(defineTool, client, bridge, registry, boardSync = null, boardSyncFor = () => boardSync) {
   const str = (description, required = true) => ({ type: 'string', ...(required ? { required: true } : {}), description });
   const num = (description, required = true) => ({ type: 'integer', ...(required ? { required: true } : {}), description });
   const item = { work_item_id: str('共享事项 ID。先通过查询获取，不使用标题或本地数组下标。') };
@@ -19,16 +19,18 @@ export function createToolDefinitions(defineTool, client, bridge, registry, boar
       context: await client.bootstrap(), client_instance_id: await bridge.instance(), adapters: await registry.probe(),
       ...(boardSync ? { board_sync: boardSync.lastResult } : {}),
     })),
+    make('integration_contract', '读取 Hub 通用接入协议版本与业务语义；不代表某个宿主适配器已经安装。', {}, () => client.integrationContract()),
     make('pipeline_list', '列出 Hub 流水线及步骤；只读取。', {}, () => client.listPipelines()),
     make('pipeline_get', '读取流水线步骤、当前轮次和关联事项。', { pipeline_id: str('Hub 流水线 ID。') }, args => client.getPipeline(args.pipeline_id)),
-    make('pipeline_link', '把流水线关联到本机 DSH 待办看板；步骤激活后自动创建或复用卡片并同步业务状态。不会派单。', {
+    make('pipeline_link', '把流水线关联到所选本机看板适配器；步骤激活后自动创建或复用卡片并同步业务状态。不会派单。', {
       pipeline_id: str('Hub 流水线 ID。'), workspace_ref: str('本机工作区定位字符串。'),
       work_item_id: str('可选：要关联已有草稿的流程事项 ID。', false), draft_id: str('可选：对应的已有看板草稿 ID。', false),
-    }, args => boardSync.subscribe(args.pipeline_id, args.workspace_ref, { workItemId: args.work_item_id, draftId: args.draft_id })),
-    make('pipeline_sync', '立即对账当前成员已关联的流水线；不执行工单或验收。', {}, () => boardSync.syncAll()),
+      adapter: str('可选：已注册的看板适配器名称；省略使用配置中的默认看板。', false),
+    }, args => boardSyncFor(args.adapter).subscribe(args.pipeline_id, args.workspace_ref, { workItemId: args.work_item_id, draftId: args.draft_id })),
+    make('pipeline_sync', '立即对账当前成员已关联的流水线；不执行工单或验收。', { adapter: str('可选看板适配器名称。', false) }, args => boardSyncFor(args.adapter).syncAll()),
     make('pipeline_unlink', '停止同步并移除该流程的 Hub 关联字段；保留看板本地草稿及其他本地内容。', {
-      pipeline_id: str('已关联的 Hub 流水线 ID。'),
-    }, args => boardSync.unsubscribe(args.pipeline_id)),
+      pipeline_id: str('已关联的 Hub 流水线 ID。'), adapter: str('可选看板适配器名称。', false),
+    }, args => boardSyncFor(args.adapter).unsubscribe(args.pipeline_id)),
     make('ledger_search', '查询共享跨组事项。只读取，不接单、不启动 Agent。', {
       view: str('all、mine、requested、review 或 inbox。', false), q: str('搜索词。', false), status: str('状态筛选。', false),
     }, args => client.listItems(args)),
@@ -57,6 +59,8 @@ export function createToolDefinitions(defineTool, client, bridge, registry, boar
     make('run_start', '只有用户明确要求执行时才调用。能力探测成功后登记固定工具版本，通过 ExecutionAdapter 启动一次，绝不因重连重复启动。', {
       ...item, ...operation, ...version, adapter: str('已注册的 ExecutionAdapter 名称。'), workspace_ref: str('本机工作区定位字符串。'),
       capabilities_json: str('可选固定工具版本数组 [{capability_id,version}]；省略时由服务端解析该组工具集。', false),
+      pipeline_attempt_id: str('流水线事项必须提供当前轮次 ID。', false),
+      pipeline_generation: num('流水线事项必须提供当前流程 generation。', false),
     }, args => bridge.start(args.work_item_id, { ...args, ...(args.capabilities_json ? { capabilities: JSON.parse(args.capabilities_json) } : {}) })),
     make('run_register', '为现有外部会话登记运行记录；data_json 含 harness/workspace_ref/external_session_id，可选固定 capabilities。此调用不启动进程。', {
       ...item, ...operation, ...version, ...data,

@@ -136,7 +136,7 @@ node packages/cli/bin/teamhub.mjs tools run "D:\team-tools\log-summary\0.1.0" --
 
 对应结果记录在 [宿主验证记录](harness-host-verification.md)，MCP-only 双身份业务测试为 `packages/integration/test_mcp_workflow.py`。DSH 的两版官方宿主记录单独保留在 [DSH 安装验证](dsh-installation-verification.md)。
 
-当前仍需用户环境完成 Windows 安装、定制 DSH 待办看板和增强 Superagent 适配。自动启动、取消和恢复任意 harness 需要各自的真实 `ExecutionAdapter`；通用 MCP 可用不会被写成这些适配已经完成。
+通用适配器协议支持进程内 Node 接口及跨语言 JSON-RPC stdio，可将其他看板和执行器接入同一客户端，详见 [通用接入协议 v1](adapter-protocol-v1.md)。自动启动、取消和恢复特定 Harness 仍需要该宿主的真实 `ExecutionAdapter`；通用 MCP 可用不会被写成这些适配已经完成。已有 0.2.0 正式 DSH 看板联动记录；0.3.0 正式 profile 尚未切换。
 
 ## 官方格式依据
 

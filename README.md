@@ -2,7 +2,7 @@
 
 面向 DSH 和其他 Agent Harness 的跨组协作台账与共享工具库。首版将事项责任、版本化交付、人工验收、Agent 执行记录和共享能力包放进一个可自托管的工作空间。
 
-> 当前源码版本：0.2.0。已实现独立于 DSH 的服务、CLI 与 47 个 MCP 业务工具，支持串行流水线，并提供 Claude Code、Codex、OpenCode 的配置生成与项目 Skill 安装。可选接入 `dsh-todo-kanban` 的流水线关联和状态投影；增强 Superagent 自动派发仍需后续适配。
+> 当前源码版本：0.3.0。已实现独立于 DSH 的服务、CLI 与 48 个 MCP 工具，支持串行流水线，并提供 Claude Code、Codex、OpenCode 的配置生成与项目 Skill 安装。看板和执行器可通过版本化适配器协议接入；DSH 看板与 Superagent 是可选适配器。
 
 ## 现在可以做什么
 
@@ -11,6 +11,7 @@
 - 创建、校验、发布和复制串行流水线模板；按固定模板版本创建任务，为步骤绑定团队与验收人，前一步验收后自动发起下一组协作。
 - 流水线支持退回重做、拒收后重新指派、暂停／恢复与取消；每轮固定上下文，旧轮次不能提交或验收新交付。
 - 在已启用 Hub 接入的 DSH 看板中，以稳定外部键关联流水线步骤并自动同步业务状态；本地内容和 Superagent 工单状态各自保留。
+- 使用通用协议接入其他看板或执行器；可选进程内 Node 接口或跨语言 JSON-RPC stdio，并按真实能力声明启动、状态查询、取消和恢复。
 - 维护事项依赖，避免循环；前置事项验收通过后才允许开始。
 - 分别记录本地待办绑定和 Agent Run。Run 成功只更新执行证据，业务事项仍需交付与验收。
 - 发布六种能力类型的元数据及不可变文本版本包；下载 Skill/脚本、维护团队固定版本工具集。
@@ -19,13 +20,13 @@
 - 将共享 Skill 固定版本安装到 Claude Code、Codex 或 OpenCode 的项目发现目录；通过通用 CLI 安装并显式运行共享脚本。
 - 使用 SQLite 单实例服务，提供幂等写入、版本冲突检测、事件游标与数据库/附件备份。
 
-本项目不内置模型账户或远程执行集群。流水线引擎目前限定为串行的“工作＋验收”步骤；并行、跨步骤回退和自动派发 Agent 尚未实现。共享能力库中的 workflow/app 类型仍用作目录和资料发布。脚本仅在用户明确调用时于客户端运行。
+本项目不内置模型账户或远程执行集群。流水线引擎目前限定为串行的“工作＋验收”步骤；并行与跨步骤回退尚未实现，流程推进不会自动派发 Agent。共享能力库中的 workflow/app 类型仍用作目录和资料发布。脚本仅在用户明确调用时于客户端运行。
 
 流水线操作与接口示例见 [串行流水线说明](docs/pipeline-workflows.md)。
 
 ## 五分钟启动
 
-需要 Python 3.11+；从源代码构建界面及使用 CLI 需要 Node.js 22+。DSH 插件支持已实测的 DSH 0.2.2-rc.1 和 0.2.2-rc.2，要求 Node.js 24.9+。源码交付包含预构建界面时，启动服务可跳过 Node 构建。
+需要 Python 3.11+；从源代码构建界面及使用 CLI 需要 Node.js 22+。DSH 插件要求 Node.js 24.9+，当前版本已在 DSH 0.2.2-rc.1 隔离环境验证，rc.2 的当前版本仍需复验。源码交付包含预构建界面时，启动服务可跳过 Node 构建。
 
 ### 使用其他 Agent Harness
 
@@ -103,7 +104,7 @@ python -m teamhub serve --data-dir .teamhub
 
 ## 接入 DSH 与其他 Harness
 
-通用客户端快速接入见 [跨 Harness 接入](docs/cross-harness.md)；具体包安装、DSH 加载及适配器示例见 [packages/INTEGRATION.md](packages/INTEGRATION.md)。
+通用客户端快速接入见 [跨 Harness 接入](docs/cross-harness.md)，适配器协议、能力发现与示例见 [通用接入协议 v1](docs/adapter-protocol-v1.md)；具体包安装与 DSH 加载见 [packages/INTEGRATION.md](packages/INTEGRATION.md)。
 
 ```bash
 # CLI: 先设置 TEAMHUB_URL 和 TEAMHUB_TOKEN
@@ -113,7 +114,7 @@ node packages/cli/bin/teamhub.mjs --help
 python -m teamhub.mcp_server
 ```
 
-`packages/dsh-plugin` 注册真实 DSH 工具，调用共享 API。启用兼容的 `dsh-todo-kanban` 服务后，可关联并自动同步流水线；增强 Superagent 自动派发仍未接入。适配器不可用时插件会返回明确的不支持结果，不创建虚假的执行成功。已有正式服务与 profile 的升级、备份和回滚见 [阶段 2 升级说明](docs/stage2-upgrade.md)。
+`packages/dsh-plugin` 注册真实 DSH 工具，调用共享 API。启用兼容的 `dsh-todo-kanban` 服务后，可关联并自动同步流水线；也可显式配置其他看板和执行器适配器。可选 Superagent 适配器有固定目录、工具版本及停止确认限制，详见 [协议说明](docs/adapter-protocol-v1.md)。已有 0.2.0 正式服务的备份、升级与回滚历史见 [阶段 2 升级说明](docs/stage2-upgrade.md)；0.3.0 的正式部署需另行验证。
 
 HTTP API 交互文档：**http://127.0.0.1:8765/docs**。所有业务读取和写入都使用 Bearer 身份令牌；健康检查和显式演示身份入口除外。动态事项操作的请求结构见 [实现契约](docs/implementation-contract.md)。
 
@@ -170,8 +171,8 @@ npm run build
 
 接入层测试命令见 `packages/INTEGRATION.md`。验证记录见 [docs/acceptance.md](docs/acceptance.md)。
 
-这是独立实现，未复制 HajimiWorkbench 或 dsh-task-ledger 源码，也未修改现有 Superagent 子模块。本次已核对本机看板的草稿 ID、数据存储和工单投影，并实现可选关联；执行派发与取消仍需独立适配。
+这是独立实现，未复制 HajimiWorkbench 或 dsh-task-ledger 源码，也未修改现有 Superagent 子模块。已核对本机看板接口并实现可选关联；Superagent 执行适配器基于已核对的管理接口，实际派发与停止确认的验证范围见 [协议说明](docs/adapter-protocol-v1.md)。
 
-“其他 harness 可接入”指共享台账、串行流水线、交付验收、能力发布与固定版本使用；自动启动任意 Agent、同步其他宿主内置看板、统一取消/恢复执行仍需对应宿主适配。DSH 看板与跨组流程已在本机 DSH 0.2.2-rc.1 的隔离 profile 中验证；现有正式 profile 与旧 Hub 的升级需要独立的停止、备份和应用步骤。
+“其他 harness 可接入”指通过通用业务接口使用台账、流水线、交付验收与能力库，也可以实现本机看板或执行器适配器。自动控制具体宿主仍需实现并验证该宿主的真实适配器。DSH 看板与两组业务流程已在本机 DSH 0.2.2-rc.1 的隔离 profile 中验证；0.3.0 尚未部署到正式 profile。
 
 开源许可证：**MIT**。完整实施范围与后续接入事项见 [架构说明](docs/architecture.md) 和 [接入差距](docs/integration-gaps.md)。

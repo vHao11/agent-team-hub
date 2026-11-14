@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "adapters": [
+    {
+      "name": "local-json-board",
+      "kind": "board",
+      "command": "python",
+      "args": ["<local-json-board.py 的绝对路径>", "<本机状态目录>/board.json", "local-json-board"],
+      "env": [],
+      "timeout_ms": 20000
+    }
+  ]
+}

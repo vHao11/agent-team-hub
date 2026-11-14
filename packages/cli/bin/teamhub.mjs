@@ -5,6 +5,9 @@ import { HubClient, HubError, operationId, segment } from '../lib/client/index.m
 import { installRelease, runInstalled } from '../lib/client/installer.mjs';
 import { installHarnessSkill, validateInstallTarget } from '../lib/client/harnesses.mjs';
 import { clientInstanceId, defaultStateDir, listOutbox, queueOperation, replayOutbox } from '../lib/client/state.mjs';
+import { AdapterRegistry, LocalBridge } from '../lib/client/bridge.mjs';
+import { PipelineBoardSync } from '../lib/client/board-sync.mjs';
+import { registerStdioAdapters } from '../lib/client/stdio-adapter.mjs';
 
 const ARTIFACT_TYPES = Object.freeze({
   '.md': 'text/markdown', '.txt': 'text/plain', '.log': 'text/plain',
@@ -12,11 +15,12 @@ const ARTIFACT_TYPES = Object.freeze({
   '.yaml': 'text/plain', '.yml': 'text/plain', '.toml': 'text/plain',
 });
 
-const HELP = `Agent Team Hub CLI 0.1.0 (Node 22+)
+const HELP = `Agent Team Hub CLI 0.2.0 (Node 22+)
 Environment: TEAMHUB_URL, TEAMHUB_TOKEN, TEAMHUB_STATE_DIR
 Every command prints JSON. Do not place tokens in command history.
 
 teamhub whoami
+teamhub contract
 teamhub items list [--view inbox|mine|requested|review|all] [--status active] [--q TEXT]
 teamhub items get ID
 teamhub items create --data @request.json
@@ -29,6 +33,12 @@ teamhub runs register ITEM_ID --version N --data @run.json
 teamhub runs get RUN_ID
 teamhub runs report RUN_ID --data @event.json
 teamhub runs cancel RUN_ID
+teamhub adapters list --adapter-config PATH
+teamhub board link ITEM_ID --adapter NAME --workspace-ref REF --adapter-config PATH
+teamhub pipelines link PIPELINE_ID --adapter NAME --workspace-ref REF --adapter-config PATH [--work-item-id ID --local-todo-id ID]
+teamhub pipelines sync|unlink|unlock [PIPELINE_ID] --adapter NAME --adapter-config PATH
+teamhub runs start ITEM_ID --adapter NAME --workspace-ref REF --version N --adapter-config PATH [--data @run.json]
+teamhub runs reconcile|cancel-execution DISPATCH_ID --adapter-config PATH
 teamhub tools list [--q TEXT] [--kind skill]
 teamhub tools show CAPABILITY_ID [--version VERSION]
 teamhub tools publish --data @capability.json
@@ -47,6 +57,7 @@ Queued updates keep the original version and never start execution. Conflicts re
 Tool installation copies pinned embedded text files only; it never runs install hooks.
 --harness installs Skills into the selected host's project discovery directory.
 The workspace must already exist; other releases are never overwritten.
+Adapter configuration is local and explicitly selected; loading it does not start an execution.
 `;
 
 function parse(values) {
@@ -73,9 +84,30 @@ async function main() {
   const write = () => ({ ...data, operation_id: o['operation-id'] || data.operation_id || operationId() });
   const versioned = () => ({ ...write(), expected_version: numeric(o.version ?? data.expected_version, '--version') });
   const instance = async () => o.instance || data.client_instance_id || await clientInstanceId(stateDir);
+  const localBridge = () => {
+    const registry = new AdapterRegistry();
+    registerStdioAdapters(need(o['adapter-config'] || process.env.TEAMHUB_ADAPTER_CONFIG, '--adapter-config'), registry);
+    return new LocalBridge(client, { registry, stateDir, ...(o.instance ? { instanceId: o.instance } : {}) });
+  };
   let result;
   const [group, action, id] = p;
-  if (group === 'whoami') result = await client.bootstrap();
+  if (group === 'adapters' && action === 'list') result = await localBridge().registry.probe();
+  else if (group === 'board' && action === 'link') result = await localBridge().linkBoard(need(id, 'item id'),
+    { adapter: need(o.adapter, '--adapter'), workspace_ref: need(o['workspace-ref'], '--workspace-ref'),
+      operation_id: write().operation_id });
+  else if (group === 'pipelines') {
+    const bridge = localBridge();
+    const adapter = need(o.adapter, '--adapter');
+    const sync = new PipelineBoardSync(client, bridge, { adapter });
+    if (action === 'link') result = await sync.subscribe(need(id, 'pipeline id'), need(o['workspace-ref'], '--workspace-ref'),
+      { workItemId: o['work-item-id'], draftId: o['local-todo-id'] });
+    else if (action === 'sync') result = await sync.syncAll();
+    else if (action === 'unlink') result = await sync.unsubscribe(need(id, 'pipeline id'));
+    else if (action === 'unlock') result = await sync.releaseStaleLock();
+    else throw new HubError('UNKNOWN_COMMAND', 'Use pipelines link, sync, unlink or unlock.');
+  }
+  else if (group === 'whoami') result = await client.bootstrap();
+  else if (group === 'contract') result = await client.integrationContract();
   else if (group === 'events') result = await client.events(numeric(o.after || 0, '--after'));
   else if (group === 'outbox') {
     if (action === 'list') result = await listOutbox(stateDir);
@@ -106,6 +138,10 @@ async function main() {
     else if (action === 'register') result = await client.createRun(need(id, 'item id'), { ...versioned(), client_instance_id: await instance() });
     else if (action === 'report') result = await client.reportRun(need(id, 'run id'), { ...write(), client_instance_id: await instance() });
     else if (action === 'cancel') result = await client.cancelRun(need(id, 'run id'), write());
+    else if (action === 'start') result = await localBridge().start(need(id, 'item id'), { ...versioned(),
+      adapter: need(o.adapter, '--adapter'), workspace_ref: need(o['workspace-ref'], '--workspace-ref') });
+    else if (action === 'reconcile') result = await localBridge().reconcile(need(id, 'dispatch id'));
+    else if (action === 'cancel-execution') result = await localBridge().cancel(need(id, 'dispatch id'), write().operation_id);
     else throw new HubError('UNKNOWN_COMMAND', 'Unknown run command.');
   } else if (group === 'tools') {
     if (action === 'list') result = await client.listCapabilities({ q: o.q, kind: o.kind });
@@ -127,7 +163,8 @@ async function main() {
     else throw new HubError('UNKNOWN_COMMAND', 'Use toolsets get or set.');
   } else throw new HubError('UNKNOWN_COMMAND', 'Unknown command. Run teamhub --help.');
   process.stdout.write(JSON.stringify(result, null, 2) + '\n');
-  if (result?.status === 'failed' || result?.status === 'timed_out') process.exitCode = 1;
+  if (result?.status === 'failed' || result?.status === 'timed_out' || result?.synced === false
+      || (Array.isArray(result) && result.some(value => value?.synced === false))) process.exitCode = 1;
 }
 main().catch(error => {
   process.stderr.write(JSON.stringify(error.toJSON?.() ?? { error: { code: 'CLI_ERROR', message: error.message } }, null, 2) + '\n');
