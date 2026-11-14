@@ -1,4 +1,16 @@
-# 从 0.2.0 升级通用适配协议
+# 适配器与流水线升级
+
+## 从 0.3.0 升级到 0.4.0
+
+0.4.0 继续使用数据库 schema 2；旧流水线模板省略依赖字段时保持串行行为，旧看板订阅继续沿用原外部键。双向看板操作需要工作台的 `dsh-todo-kanban` 0.8.2 和 `dsh-team-hub` 0.4.0 一起部署，旧看板只能继续使用其已有快照能力。自动派发默认关闭，升级不会替任何流程开启。
+
+1. 构建界面、wheel 和 DSH 插件包；在新的虚拟环境安装 wheel 并保留 0.3.0 环境。使用 `scripts/verify_wheel.py`、`scripts/verify_service_launcher.py --python <候选Python> --expected-version 0.4.0 --require-contract` 和 `scripts/verify_existing_snapshot.py <正式数据目录> --installed` 检查安装包及数据副本。工作台的看板源码、架构图和本机工作台规则须一并审查和验证。
+2. 确认工作台干净、远端同步且没有其他进行中的工作；查看 Superagent 运行中和排队中的工单。先做在线备份，再停止目标 DSH profile 和 Hub 并确认端口释放，随后用 `scripts/backup_stage2_local.py` 备份 Hub、看板、Superagent、profile、启动器及桥接状态，校验恢复结果。
+3. 按工作台发布和应用流程更新看板。DSH 已停止且工作台干净时，使用 `scripts/upgrade-dsh-profile-stage2.ps1` 指定已验证的包，以及 `-CurrentVersion 0.3.0 -TargetVersion 0.4.0`；保留自动生成的 profile 和依赖备份，检查现有 overlay 的 `tokenFile` 等本机设置。
+4. 将 Hub 启动器指向已验证的 0.4.0 虚拟环境，启动 Hub 和 DSH。核对版本、成员、旧关联与卡片数量，并在明确标记的测试流程中验证看板操作和状态对账。按需逐成员、逐流程启用自动执行；真实模型执行及最终验收须单独核对。
+5. 回滚前停止服务并保存升级后数据，恢复对应旧环境、启动器和 profile；如需恢复旧数据库或看板，先保留当前数据，备份不会自动合并升级后的编辑。
+
+## 从 0.2.0 升级到 0.3.0
 
 0.3.0 沿用 Hub 数据库 schema 2，并兼容 `dsh-todo-kanban` 的旧订阅文件。升级正式环境前仍应在目标机器验证版本、备份和恢复；示例中的路径需要替换成该机器的实际路径。
 
