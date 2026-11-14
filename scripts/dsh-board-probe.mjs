@@ -28,7 +28,7 @@ const definitions = {
     { key: 'test', name: '验证', team_role: 'test', reviewer_role: 'review', acceptance_spec: ['提交报告'], required_artifact_kinds: ['document'] }],
 };
 let browser, page;
-let unregisterExternal;
+let unregisterExternal, unregisterExecutor;
 try {
   assert.equal(runtime.ctx.get('todoKanbanHub')?.apiVersion, 1, '看板 Cordis 服务未加载');
   assert.equal(runtime.ctx.get('teamHubActions')?.apiVersion, 1, 'Hub 看板操作服务未加载');
@@ -179,14 +179,40 @@ try {
   assert.equal((await cardIn('todo', newCardId)).hub.attemptId, view.steps[0].attempt.id);
   const historicalAction = await boardAction(await cardIn('dropped', firstId), 'accept');
   assert.notEqual(historicalAction.status, 200, '历史轮次不能继续执行业务操作');
+
+  // 在真实 DSH 插件容器中验证工具与调度器的连接；执行器为隔离替身，不调用模型。
+  let launches = 0;
+  unregisterExecutor = adapters.registerExecutor('isolated-executor', {
+    async probe() { return { available: true, protocol_version: 1, kind: 'executor', canRecover: true }; },
+    async start() { launches++; return { run_id: 'synthetic-host-run', status: 'running' }; },
+    async getStatus() { return { status: 'succeeded', summary: '隔离执行结果' }; },
+    async findByDispatchId() { return { run_id: 'synthetic-host-run' }; },
+  });
+  let automated = await lin.request('POST', '/pipelines', { operation_id: op(), title: '隔离自动派发验证', project_id: 'proj-interface',
+    template_version_id: version.id, role_bindings: { build: 'team-trading', test: 'team-qa', review: 'u-xu' }, assignees: { build: 'u-lin' } });
+  automated = await lin.request('POST', `/pipelines/${automated.pipeline.id}/start`, { operation_id: op(), expected_version: automated.pipeline.version });
+  const automation = runtime.ctx.tools.get('teamhub_pipeline_automation');
+  await automation.execute({ action: 'tick' });
+  assert.equal(launches, 0, '没有启用自动派发时不能启动执行器');
+  await automation.execute({ action: 'enable', pipeline_id: automated.pipeline.id, adapter: 'isolated-executor',
+    workspace_ref: 'isolated-workspace', auto_accept: true });
+  await automation.execute({ action: 'tick' });
+  await automation.execute({ action: 'tick' });
+  const automaticItem = await lin.getItem(automated.steps[0].item.id);
+  assert.equal(launches, 1, '已启用流程每轮只应启动一次');
+  assert.equal(automaticItem.runs.length, 1);
+  assert.equal(automaticItem.runs[0].status, 'succeeded');
+  assert.notEqual(automaticItem.item.status, 'done', '执行成功不能自动验收');
+  await automation.execute({ action: 'disable', pipeline_id: automated.pipeline.id });
   console.log('TEAMHUB_DSH_BOARD=' + JSON.stringify({ status: 'passed', adapter: 'todoKanbanHub', external_adapter: 'portable-board', teams: 2, members: 3,
     cards: cards.length, automatic_sync: true, board_to_hub_review: true, wrong_actor_rejected: true, rework: true, duplicate_link: false,
-    pipeline_status_before_rollback: 'completed', rollback_old_cards_superseded: true, new_attempt_linked: true,
+    pipeline_status_before_rollback: 'completed', rollback_old_cards_superseded: true, new_attempt_linked: true, native_automation_tool: true,
     dsh_viewports: ['1440x900', '390x844'], browser_errors: errors.length }));
 } catch (error) {
   if (page) await page.screenshot({ path: path.join(process.env.TEAMHUB_EVIDENCE_DIR, 'dsh-board-failure.png') }).catch(() => {});
   throw error;
 } finally {
+  unregisterExecutor?.();
   unregisterExternal?.();
   if (browser) await browser.close();
   await runtime.shutdown.shutdown(0);
