@@ -166,8 +166,22 @@ try {
   await page.screenshot({ path: path.join(process.env.TEAMHUB_EVIDENCE_DIR, 'dsh-board-mobile.png') });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth), false);
   assert.deepEqual(errors, []);
+
+  // 已完成流程跨步骤回退后，旧卡片保留为历史，新轮次得到独立卡片。
+  view = await lin.rollbackPipeline(pipelineId, 'build', { operation_id: op(), expected_version: view.pipeline.version, reason: '合成回退验证' });
+  assert.equal(view.pipeline.status, 'active');
+  const afterRollback = JSON.parse(await sync.execute({}));
+  const newCardId = afterRollback.find(value => value.pipeline_id === pipelineId).cards
+    .find(value => value.work_item_id === view.steps[0].item.id).local_todo_id;
+  assert.notEqual(newCardId, firstId);
+  assert.equal((await cardIn('dropped', firstId)).hub.superseded, true);
+  assert.equal((await cardIn('dropped', secondId)).hub.superseded, true);
+  assert.equal((await cardIn('todo', newCardId)).hub.attemptId, view.steps[0].attempt.id);
+  const historicalAction = await boardAction(await cardIn('dropped', firstId), 'accept');
+  assert.notEqual(historicalAction.status, 200, '历史轮次不能继续执行业务操作');
   console.log('TEAMHUB_DSH_BOARD=' + JSON.stringify({ status: 'passed', adapter: 'todoKanbanHub', external_adapter: 'portable-board', teams: 2, members: 3,
-    cards: cards.length, automatic_sync: true, board_to_hub_review: true, wrong_actor_rejected: true, rework: true, duplicate_link: false, pipeline_status: view.pipeline.status,
+    cards: cards.length, automatic_sync: true, board_to_hub_review: true, wrong_actor_rejected: true, rework: true, duplicate_link: false,
+    pipeline_status_before_rollback: 'completed', rollback_old_cards_superseded: true, new_attempt_linked: true,
     dsh_viewports: ['1440x900', '390x844'], browser_errors: errors.length }));
 } catch (error) {
   if (page) await page.screenshot({ path: path.join(process.env.TEAMHUB_EVIDENCE_DIR, 'dsh-board-failure.png') }).catch(() => {});
