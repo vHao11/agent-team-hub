@@ -7,6 +7,7 @@ from datetime import datetime
 import hashlib
 import json
 from pathlib import Path
+import re
 import shutil
 import sqlite3
 import subprocess
@@ -38,7 +39,12 @@ def main():
     parser.add_argument('--dsh-home', type=Path, required=True)
     parser.add_argument('--machine-file', type=Path, required=True)
     parser.add_argument('--candidate-python', type=Path, required=True)
+    parser.add_argument('--source-python', type=Path, help='Python of the installed Hub being backed up')
+    parser.add_argument('--bridge-state-dir', type=Path, help='Optional existing local bridge state to back up')
+    parser.add_argument('--label', default='stage2', help='Safe backup directory prefix')
     args = parser.parse_args()
+    if not re.fullmatch(r'[a-z0-9][a-z0-9-]{0,40}', args.label):
+        raise RuntimeError('Invalid backup label')
     hub, dsh, machine_file = args.hub_home.resolve(), args.dsh_home.resolve(), args.machine_file.resolve()
     machine = json.loads(machine_file.read_text(encoding='utf-8-sig'))
     profile = dsh / 'profiles' / machine['profile']
@@ -47,11 +53,13 @@ def main():
         raise RuntimeError('The requested Hub or DSH home does not match the machine configuration')
     backup_root = hub / 'backups'
     backup_root.mkdir(exist_ok=True)
-    dest = backup_root / ('stage2-' + datetime.now().strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:8])
+    dest = backup_root / (args.label + '-' + datetime.now().strftime('%Y%m%d-%H%M%S') + '-' + uuid.uuid4().hex[:8])
     dest.mkdir()
     manifest = {}
     hub_zip = dest / 'hub-before-upgrade.zip'
-    old_python = hub / '.venv-release-3bd3d820-a/Scripts/python.exe'
+    old_python = args.source_python.resolve() if args.source_python else hub / '.venv-release-3bd3d820-a/Scripts/python.exe'
+    if not old_python.is_file():
+        raise RuntimeError('The installed Hub Python environment does not exist')
     result = subprocess.run([str(old_python), '-m', 'teamhub', 'backup', '--data-dir', str(hub / 'data'),
                              '--output', str(hub_zip)], capture_output=True, text=True, encoding='utf-8', errors='replace')
     if result.returncode:
@@ -90,6 +98,17 @@ def main():
     if not board_file.is_file():
         raise RuntimeError('Board state was not backed up')
     json.loads(board_file.read_text(encoding='utf-8-sig'))
+    if args.bridge_state_dir:
+        bridge = args.bridge_state_dir.resolve()
+        if not bridge.is_dir():
+            raise RuntimeError('The requested bridge state directory does not exist')
+        for source in bridge.rglob('*'):
+            if source.is_symlink():
+                raise RuntimeError('Bridge state contains a symlink; backup requires manual review')
+            if source.is_file():
+                if source.name.endswith(('.lock', '.recovery')):
+                    raise RuntimeError('A bridge synchronization lock exists; check its owner before backup')
+                copy_checked(source, dest / 'bridge-state' / source.relative_to(bridge), dest, manifest)
     source_db = superagent / 'orchestrator.sqlite'
     target_db = dest / 'superagent/orchestrator.sqlite'
     target_db.parent.mkdir(parents=True, exist_ok=True)

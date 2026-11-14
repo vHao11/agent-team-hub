@@ -114,7 +114,7 @@ node packages/cli/bin/teamhub.mjs --help
 python -m teamhub.mcp_server
 ```
 
-`packages/dsh-plugin` 注册真实 DSH 工具，调用共享 API。启用兼容的 `dsh-todo-kanban` 服务后，可关联并自动同步流水线；也可显式配置其他看板和执行器适配器。可选 Superagent 适配器有固定目录、工具版本及停止确认限制，详见 [协议说明](docs/adapter-protocol-v1.md)。已有 0.2.0 正式服务的备份、升级与回滚历史见 [阶段 2 升级说明](docs/stage2-upgrade.md)；0.3.0 的正式部署需另行验证。
+`packages/dsh-plugin` 注册真实 DSH 工具，调用共享 API。启用兼容的 `dsh-todo-kanban` 服务后，可关联并自动同步流水线；也可显式配置其他看板和执行器适配器。可选 Superagent 适配器有固定目录、工具版本及停止确认限制，详见 [协议说明](docs/adapter-protocol-v1.md)。已有环境的备份、升级和回滚见 [0.3.0 升级说明](docs/adapter-upgrade.md)。
 
 HTTP API 交互文档：**http://127.0.0.1:8765/docs**。所有业务读取和写入都使用 Bearer 身份令牌；健康检查和显式演示身份入口除外。动态事项操作的请求结构见 [实现契约](docs/implementation-contract.md)。
 
