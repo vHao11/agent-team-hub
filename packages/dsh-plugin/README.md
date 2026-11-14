@@ -2,13 +2,13 @@
 
 Agent Team Hub 的 DSH 工具桥。使用官方 `defineTool` / `ctx.tools.register` 接口，注册 `teamhub_*` 工具。具体操作、安装和已验证范围见仓库 `packages/INTEGRATION.md`。
 
-本包 0.5.0 提供并行流程回退、按成员和流程显式启用自动执行，以及 DSH 看板的受控业务操作。固定版本能力会在派发时自动安装并核验；Superagent 快照包含入口内容，供没有文件读取工具的任务使用。隔离 DSH 0.2.2-rc.1 profile 已验证真实看板跨组流程；其他 DSH 版本和目标 profile 仍需各自验证。
+本包 0.5.1 提供并行流程回退、按成员和流程显式启用自动执行，以及 DSH 看板的受控业务操作。固定版本能力会在派发时自动安装并核验；Superagent 快照包含入口内容，供没有文件读取工具的任务使用。兼容支持停止状态接口的 Superagent，并在 DSH 受管资源退出后确认停止；当前进程范围证明仅支持经过校验的 Windows DSH 0.2.2-rc.1 本机提供器，旧版和无法核实的运行保持未知。隔离 DSH 0.2.2-rc.1 profile 已验证真实看板跨组流程；其他 DSH 版本和目标 profile 仍需各自验证。
 
 ```sh
 node packages/dsh-plugin/build.mjs
 cd packages/dsh-plugin
 npm pack
-dsh plugin --profile web add ./dsh-team-hub-0.5.0.tgz
+dsh plugin --profile web add ./dsh-team-hub-0.5.1.tgz
 dsh --profile web --dump-config
 ```
 

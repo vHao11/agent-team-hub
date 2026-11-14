@@ -16,13 +16,14 @@ export class DshSuperagentAdapter {
     if (typeof taskType !== 'string' || taskType.length > 64) throw new HubError('INVALID_SUPERAGENT_TYPE', 'Invalid Superagent task type.');
     this.base = parsed.origin + '/orchestrator/api'; this.taskType = taskType.trim(); this.stateDir = stateDir; this.fetch = fetchImpl; this.timeout = timeout;
   }
-  async request(method, route, body) {
+  async request(method, route, body, { allowNotFound = false } = {}) {
     let response;
     try {
       response = await this.fetch(this.base + route, { method, redirect: 'error', signal: AbortSignal.timeout(this.timeout),
         headers: { 'X-Orchestrator-Request': '1', ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     } catch { throw new HubError('SUPERAGENT_UNAVAILABLE', 'Cannot reach the local Superagent management API.'); }
+    if (allowNotFound && response.status === 404) return null;
     if (!response.ok) throw new HubError('SUPERAGENT_API_ERROR', `Superagent management API returned HTTP ${response.status}.`);
     try { return await response.json(); } catch { throw new HubError('SUPERAGENT_API_ERROR', 'Superagent returned invalid JSON.'); }
   }
@@ -149,13 +150,21 @@ export class DshSuperagentAdapter {
     if (ticket?.stage === 'working') status = ticket.action === 'queued' ? 'queued' : 'running';
     else if (ticket?.stage === 'person' || ticket?.stage === 'idle') status = 'waiting_input';
     else if (ticket?.stage === 'ended' && ticket.ended?.by === 'executor' && ['completed', 'merged'].includes(ticket.ended?.outcome)) status = 'succeeded';
+    else if (ticket?.stage === 'ended' && ticket.ended?.by === 'human' && ticket.ended?.outcome === 'stopped') {
+      // 旧版没有停止状态接口；接口异常、身份不符或未确认时都保持未知。
+      try {
+        const proof = await this.request('GET', `/tickets/${encodeURIComponent(handle.run_id)}/stop-status`, undefined, { allowNotFound: true });
+        if (proof?.ticket_id === handle.run_id && proof.scope === 'dsh-managed' && proof.status === 'stopped') status = 'cancelled';
+      } catch { /* 无法核实停止，不能提前同步终态。 */ }
+    }
     return { status, ...(typeof ticket?.summary === 'string' ? { summary: ticket.summary } : {}) };
   }
   async cancel(handle) {
     if (!handle?.run_id) throw new HubError('INVALID_ADAPTER_RESULT', 'A Superagent ticket ID is required.');
     const result = await this.request('POST', `/tickets/${encodeURIComponent(handle.run_id)}/stop`);
     if (result?.stopped !== true) throw new HubError('INVALID_ADAPTER_RESULT', 'Superagent did not acknowledge the stop request.');
-    // 该接口只确认工单停止请求，后台执行资源可能仍在退出。
-    return { requested: true, confirmed: false };
+    // POST 只确认请求；只有宿主的资源状态接口能确认实际停止。
+    const status = await this.getStatus(handle).catch(() => null);
+    return { requested: true, confirmed: status?.status === 'cancelled' };
   }
 }

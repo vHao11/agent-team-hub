@@ -1,5 +1,9 @@
 # 适配器与流水线升级
 
+## 从 DSH 插件 0.5.0 升级到 0.5.1
+
+此版本仅更新 DSH 桥接插件；Hub 服务仍为 0.5.0，数据库结构不变。先按工作台流程集成并发布支持 `stop-status` 的 Superagent，然后备份现有 DSH profile、Superagent 状态和桥接状态，确认宿主空闲后升级 DSH 插件并重启。使用隔离测试任务核对停止确认及看板关联。旧 Superagent 也可使用新版插件，但其停止请求保持 `unknown`，直到具名执行登记人核实；当前自动证明仅支持校验过的 Windows DSH 0.2.2-rc.1 本机提供器，其他提供器、原生 CLI 引擎或宿主重启后无法追溯的运行同样保持未知。回滚时先备份升级后的状态，再恢复原有插件包和 profile。
+
 ## 从 0.4.0 升级到 0.5.0
 
 0.5.0 沿用数据库 schema 2 和已有看板协议。固定版本安装只在显式派发时发生；默认不自动启用执行。升级前在候选环境运行 `scripts/verify_existing_snapshot.py` 检查旧数据副本，并用 `scripts/backup_stage2_local.py` 备份 Hub、看板、Superagent、profile 和桥接状态。确认宿主空闲后停止目标 DSH 和 Hub，保留旧虚拟环境及 profile；使用 `scripts/upgrade-dsh-profile-stage2.ps1` 指定 `-CurrentVersion 0.4.0 -TargetVersion 0.5.0` 和已验证的新插件包，再切换 Hub 启动器至新环境。重启后核对旧关联与业务数据，用明确标记的测试任务验证自动安装与同步。回滚前先保存升级后的数据，再恢复对应启动器、profile 与旧环境；备份不会合并升级期间的编辑。

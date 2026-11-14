@@ -62,6 +62,32 @@ test('Superagent adapter refuses non-loopback and credential-bearing addresses',
   }
 });
 
+test('Superagent stop is confirmed only by the matching managed-resource proof', async t => {
+  let proof = { ticket_id: 'ticket-1', scope: 'dsh-managed', status: 'stopping' }, ticket = { stage: 'working' };
+  const server = createServer((req, res) => {
+    let result;
+    if (req.url === '/orchestrator/api/tickets/ticket-1/stop') {
+      ticket = { stage: 'ended', ended: { by: 'human', outcome: 'stopped' } }; result = { stopped: true };
+    } else if (req.url === '/orchestrator/api/tickets/ticket-1') result = ticket;
+    else if (req.url === '/orchestrator/api/tickets/ticket-1/stop-status') result = proof;
+    else { res.writeHead(404); res.end(); return; }
+    res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify(result));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const adapter = new DshSuperagentAdapter({ url: `http://127.0.0.1:${server.address().port}` });
+  const handle = { run_id: 'ticket-1' };
+  assert.deepEqual(await adapter.cancel(handle), { requested: true, confirmed: false });
+  assert.equal((await adapter.getStatus(handle)).status, 'unknown');
+  proof = { ticket_id: 'other', scope: 'dsh-managed', status: 'stopped' };
+  assert.equal((await adapter.getStatus(handle)).status, 'unknown');
+  proof = { ticket_id: 'ticket-1', scope: 'other', status: 'stopped' };
+  assert.equal((await adapter.getStatus(handle)).status, 'unknown');
+  proof = { ticket_id: 'ticket-1', scope: 'dsh-managed', status: 'stopped' };
+  assert.equal((await adapter.getStatus(handle)).status, 'cancelled');
+  assert.deepEqual(await adapter.cancel(handle), { requested: true, confirmed: true });
+});
+
 test('Superagent receives verified fixed entry content and refuses oversized snapshots before creating a ticket', async t => {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), 'teamhub-superagent-pinned-'));
   assert.ok(path.resolve(workspace).startsWith(path.resolve(os.tmpdir()) + path.sep));
