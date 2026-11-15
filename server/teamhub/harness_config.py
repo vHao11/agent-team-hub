@@ -31,6 +31,7 @@ def absolute_path(value: str, label: str) -> str:
 def render_config(harness: str, *, python: str | None = None,
                   url: str = "http://127.0.0.1:8765",
                   connection_file: str | None = None,
+                  ca_file: str | None = None,
                   token_env: str = "TEAMHUB_TOKEN", name: str = "agent-team-hub") -> str:
     """Render a JSON/TOML fragment using each host's actual environment syntax.
 
@@ -52,6 +53,8 @@ def render_config(harness: str, *, python: str | None = None,
     elif harness == "generic":
         raise ValueError("Generic clients require --connection-file; environment expansion differs by host")
     environment = {} if connection_file else {"TEAMHUB_URL": base}
+    if ca_file:
+        environment["TEAMHUB_CA_FILE"] = absolute_path(ca_file, "CA certificate file")
     if harness == "codex":
         if not connection_file and token_env != "TEAMHUB_TOKEN":
             raise ValueError("Codex env_vars forwards the same name; use TEAMHUB_TOKEN or --connection-file")
@@ -59,8 +62,10 @@ def render_config(harness: str, *, python: str | None = None,
         encode = lambda value: json.dumps(value, ensure_ascii=False)
         lines = [f"[mcp_servers.{name}]", f"command = {encode(command)}", f"args = {encode(args)}"]
         if not connection_file:
-            lines += ['env_vars = ["TEAMHUB_TOKEN"]', "", f"[mcp_servers.{name}.env]",
-                      f"TEAMHUB_URL = {encode(base)}"]
+            lines += ['env_vars = ["TEAMHUB_TOKEN"]']
+        if environment:
+            lines += ["", f"[mcp_servers.{name}.env]"]
+            lines += [f"{key} = {encode(value)}" for key, value in environment.items()]
         return "\n".join(lines) + "\n"
     if harness in ("opencode", "opencode-v1"):
         if not connection_file:
@@ -88,13 +93,14 @@ def main() -> None:
     parser.add_argument("--python", default=sys.executable, help="Absolute Python executable with agent-team-hub[mcp] installed")
     parser.add_argument("--url", default="http://127.0.0.1:8765", help="Hub HTTP URL; connection-file mode uses the file URL")
     parser.add_argument("--connection-file", help="Absolute path to private JSON containing url and token")
+    parser.add_argument("--ca-file", help="Absolute path to a trusted PEM CA certificate for HTTPS")
     parser.add_argument("--token-env", default="TEAMHUB_TOKEN")
     parser.add_argument("--name", default="agent-team-hub")
     parser.add_argument("--output", help="Create a new config fragment; omit to print it")
     arguments = parser.parse_args()
     try:
         rendered = render_config(arguments.harness, python=arguments.python, url=arguments.url,
-                                 connection_file=arguments.connection_file, token_env=arguments.token_env,
+                                 connection_file=arguments.connection_file, ca_file=arguments.ca_file, token_env=arguments.token_env,
                                  name=arguments.name)
         if arguments.output:
             destination = Path(arguments.output).expanduser()

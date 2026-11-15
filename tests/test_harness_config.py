@@ -62,6 +62,23 @@ def test_environment_configs_use_host_syntax_and_do_not_capture_secrets(monkeypa
         render_config("generic")
 
 
+@pytest.mark.parametrize("harness", ["claude-code", "codex", "opencode", "opencode-v1", "generic"])
+def test_host_configuration_passes_explicit_ca_with_connection_file(harness):
+    ca = r"D:\团队 项目\trust\company-ca.pem"
+    rendered = render_config(harness, python=r"D:\hub\python.exe",
+                             connection_file=r"D:\hub\connection.json", ca_file=ca)
+    parsed = tomllib.loads(rendered) if harness == "codex" else json.loads(rendered)
+    if harness == "codex":
+        env = parsed["mcp_servers"]["agent-team-hub"]["env"]
+    elif harness == "opencode":
+        env = parsed["mcp"]["servers"]["agent-team-hub"]["environment"]
+    elif harness == "opencode-v1":
+        env = parsed["mcp"]["agent-team-hub"]["environment"]
+    else:
+        env = parsed["mcpServers"]["agent-team-hub"]["env"]
+    assert env == {"TEAMHUB_CA_FILE": ca}
+
+
 def test_config_output_refuses_to_replace_an_existing_host_file(tmp_path):
     destination = tmp_path / ".mcp.json"
     existing = '{"mcpServers":{"existing":{"command":"unchanged"}}}'

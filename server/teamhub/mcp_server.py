@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import ssl
 from typing import Any, Literal
 from urllib.parse import quote
 
@@ -24,6 +25,11 @@ MAX_TEXT_ARTIFACT_BYTES = 2 * 1024 * 1024
 def build_server(url: str | None = None, token: str | None = None,
                  connection_file: str | None = None) -> FastMCP:
     base, secret = load_connection(url=url, token=token, connection_file=connection_file)
+    ca_file = os.getenv('TEAMHUB_CA_FILE')
+    try:
+        verify = ssl.create_default_context(cafile=ca_file) if ca_file else True
+    except (OSError, ssl.SSLError):
+        raise ValueError('Cannot load TEAMHUB_CA_FILE; configure a readable PEM CA certificate.') from None
     server = FastMCP("Agent Team Hub", instructions=(
         "共享跨组台账与能力目录。先读取事项版本，再使用明确授权的业务命令。"
         "运行成功不等于验收通过。网络结果不确定时，重用同一个 operation_id。"
@@ -35,7 +41,7 @@ def build_server(url: str | None = None, token: str | None = None,
         if not secret:
             raise ValueError("TEAMHUB_TOKEN is required; configure a personal access token in the MCP environment.")
         try:
-            async with httpx.AsyncClient(timeout=20, follow_redirects=False,
+            async with httpx.AsyncClient(timeout=20, follow_redirects=False, verify=verify,
                                          trust_env=os.getenv("TEAMHUB_TRUST_ENV", "0") == "1") as client:
                 content = {"files": files} if files is not None else {"json": body}
                 async with client.stream(method, base + "/api/v1" + path,

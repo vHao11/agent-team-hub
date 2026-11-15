@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
 import { CheckCircle2, Copy, FilePlus2, Plus, RefreshCw, Trash2 } from 'lucide-react';
-import { api, write } from '../api';
+import { api, operationId, write } from '../api';
 import { useApi } from '../hooks';
 import type { Bootstrap, WorkflowDefinition, WorkflowRole, WorkflowStepDefinition, WorkflowTemplate, WorkflowVersion } from '../types';
 import { Dialog, EmptyState, ErrorBanner, Field, Loading, PageHeader } from './ui';
@@ -57,10 +57,12 @@ function WorkflowEditor({ template, onClose, onSaved }: { template: WorkflowTemp
   const patchRole = (key: string, patch: Partial<WorkflowRole>) => setDefinition(current => ({ ...current, roles: current.roles.map(role => role.key === key ? { ...role, ...patch } : role) }));
   const patchStep = (key: string, patch: Partial<WorkflowStepDefinition>) => setDefinition(current => ({ ...current, steps: current.steps.map(step => step.key === key ? { ...step, ...patch } : step) }));
   function addRole(kind: WorkflowRole['kind']) {
-    setDefinition(current => ({ ...current, roles: [...current.roles, { key: `${kind}_${crypto.randomUUID().slice(0, 8)}`, label: kind === 'team' ? '新团队角色' : '新验收角色', kind }] }));
+    const key = `${kind}_${operationId().slice(0, 8)}`;
+    setDefinition(current => ({ ...current, roles: [...current.roles, { key, label: kind === 'team' ? '新团队角色' : '新验收角色', kind }] }));
   }
   function addStep() {
-    setDefinition(current => ({ ...current, steps: [...current.steps, { key: `step_${crypto.randomUUID().slice(0, 8)}`, name: '', description: '',
+    const key = `step_${operationId().slice(0, 8)}`;
+    setDefinition(current => ({ ...current, steps: [...current.steps, { key, name: '', description: '',
       team_role: current.roles.find(role => role.kind === 'team')?.key || '', reviewer_role: current.roles.find(role => role.kind === 'reviewer')?.key || '',
       acceptance_spec: [''], required_artifact_kinds: ['document'], capabilities: null }] }));
   }

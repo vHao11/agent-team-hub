@@ -6,8 +6,10 @@ Agent Team Hub 提供跨组协作台账与共享能力目录。服务端保存�
 
 ```mermaid
 flowchart LR
-    H[Hub：台账、流程、验收] <-->|HTTP| C[CLI 或 DSH 客户端]
-    H <-->|HTTP| M[MCP 服务]
+    H[Hub：台账、流程、验收] <-->|本机 HTTP| P[可选私网 TLS 入口]
+    P <-->|HTTPS| W[远端 Web 或 CLI 或 DSH]
+    P <-->|HTTPS| M[MCP 服务]
+    H <-->|本机 HTTP| C[本机 CLI 或 DSH]
     M <-->|MCP| A[其他 Agent Harness]
     C --> B[本机桥接与订阅状态]
     B --> I[进程内适配器]
@@ -15,6 +17,8 @@ flowchart LR
     I --> D[DSH 看板等宿主]
     S --> X[其他看板或执行器]
 ```
+
+本机服务默认只监听回环地址。可选 TLS 入口只监听选定的 RFC 1918 私网地址，并转发到本机 Hub，不持有数据库；服务也可直接用证书启动 HTTPS。客户端仍需自己的成员令牌。私网入口、证书、访问范围与回滚见 [局域网部署与验收](lan-deployment.md)。
 
 适配器能力发现、独立身份、快照和停止确认语义见 [通用接入协议 v1](adapter-protocol-v1.md)。跨语言适配器是显式配置的本机进程，不从 Hub 自动安装。
 
