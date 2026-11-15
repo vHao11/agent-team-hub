@@ -4,7 +4,8 @@
   [Parameter(Mandatory=$true)][string]$TeamHubHome,
   [string]$ProxyUrl = '',
   [string]$CurrentVersion = '0.1.0-workbench.3bd3d820',
-  [string]$TargetVersion = '0.2.0'
+  [string]$TargetVersion = '0.2.0',
+  [ValidateSet('dsh-team-hub', 'dsh-team-hub-web')][string]$PluginName = 'dsh-team-hub'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -34,16 +35,16 @@ if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) { throw '找不�
 $nodeDir = Split-Path -Parent $machine.nodeExe
 $dsh = Join-Path $nodeDir 'dsh.cmd'
 if (-not (Test-Path -LiteralPath $dsh -PathType Leaf)) { throw '找不到本机 DSH 命令。' }
-$name = 'dsh-team-hub'
+$name = $PluginName
 if ($CurrentVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:[-.][A-Za-z0-9.-]+)?$' -or $TargetVersion -notmatch '^[0-9]+\.[0-9]+\.[0-9]+(?:[-.][A-Za-z0-9.-]+)?$') { throw '插件版本格式无效。' }
 $expectedVersion = $TargetVersion
-if (-not (Test-Path -LiteralPath (Join-Path $base 'admin-token.txt') -PathType Leaf)) { throw '找不到本机 Team Hub 令牌文件。' }
+if ($name -eq 'dsh-team-hub' -and -not (Test-Path -LiteralPath (Join-Path $base 'admin-token.txt') -PathType Leaf)) { throw '找不到本机 Team Hub 令牌文件。' }
 $manifest = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 $hasBundle = @($manifest.dsh.profile.bundles) -contains $name
 $hasDependency = @($manifest.dependencies.PSObject.Properties.Name) -contains $name
 $declaredBundle = @($machine.localProfile.localBundles) -contains $name
 $declaredDependency = @($machine.localProfile.localDependencies) -contains $name
-$installedPath = Join-Path $profileDir 'node_modules\dsh-team-hub\package.json'
+$installedPath = Join-Path $profileDir (Join-Path 'node_modules' (Join-Path $name 'package.json'))
 if ($hasBundle -or $hasDependency -or $declaredBundle -or $declaredDependency) {
   if (-not ($hasBundle -and $hasDependency -and $declaredBundle -and $declaredDependency -and (Test-Path -LiteralPath $installedPath))) { throw '检测到不完整的 Team Hub 配置，未覆盖。' }
   $installed = Get-Content -LiteralPath $installedPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -127,7 +128,7 @@ try {
     $dump = @(& $dsh --profile ([string]$machine.profile) --dump-config 2>&1)
     $dumpCode = $LASTEXITCODE
   } finally { $ErrorActionPreference = $previousPreference }
-  if ($dumpCode -ne 0 -or (($dump -join "`n") -notmatch 'dsh-team-hub')) { throw '安装后 profile 组合验证失败。' }
+  if ($dumpCode -ne 0 -or (($dump -join "`n") -notmatch [regex]::Escape($name))) { throw '安装后 profile 组合验证失败。' }
   Write-Output ('Team Hub 插件已安装，本机备份：' + $backup)
 } catch {
   $message = $_.Exception.Message

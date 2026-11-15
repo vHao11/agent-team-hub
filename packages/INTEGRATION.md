@@ -10,6 +10,7 @@
 | CLI `@agent-team-hub/cli` | JSON 输入输出、离线进度队列、固定版本安装与显式脚本执行 | 子进程 → HTTP 测试、安装路径与执行测试 | Windows 路径、Python 安装位置 |
 | 官方 Python MCP SDK | stdio；协作、并行流水线、回退、文本交付验收、能力发布、团队工具集与协议发现 | 官方 `ClientSession` → stdio → 真实 Hub；双身份和跨组流程测试 | 宿主权限与真实会话 ID 获取 |
 | DSH bundle `dsh-team-hub` | 25 个 `teamhub_*` 原生工具；流程关联、自动派发、AdapterRegistry 与跨语言适配器 | Windows rc.1 隔离 profile 与本机真实 Superagent 验证 | 其他 DSH 版本与目标 profile 的验证 |
+| DSH 页面插件 `dsh-team-hub-web` | 左侧「团队协作台」入口，在 DSH 主面板内嵌 Hub 网页 | Windows rc.1 隔离 profile 已验证页面、令牌登录、窄屏、离线与安装回滚 | 目标 profile 的安装和浏览器可访问地址 |
 | DSH 待办看板双向联动 | 稳定外部键、状态对账、显式业务命令与掉线提示 | 真实 `dsh-todo-kanban`、DSH rc.1、Hub 和浏览器的隔离跨组闭环 | 其他目标 profile 更新、重启和正式数据备份 |
 | 增强 Superagent 自动启动 | 固定目录核验、单次派发、本机持久记录与状态核对 | 真实本机只读模型任务；模拟响应丢失后找回同一工单并完成两组并行汇合 | 停止回执不证明执行已停止；不支持自动安装固定工具版本；找回依赖当前宿主触发键算法 |
 | 其他 agent harness | 专用配置生成、MCP/CLI、session 绑定；Codex、Claude Code、OpenCode V2 本机执行器 | Codex、Claude Code 的真实只读任务及恢复已验证；OpenCode 真实模型、固定 Skill 和跨组汇合已验证 | 其他宿主仍需专用适配；Windows CLI 可确认受监管的进程组退出，其他平台停止结果可能未知 |
@@ -181,6 +182,10 @@ dsh --profile web --dump-config
 本机桥在启动前写入持久派发记录；若宿主启动结果丢失，记录保持待核实，后续请求不会重复启动。宿主若提供按 dispatch ID 查询，可恢复已有执行。取消请求与确认停止分开，只有实际适配器确认后才回传 `cancelled`。此机制依赖本机状态目录保留；删除状态记录不等于取消外部执行，服务端仍保留未结束 Run。
 
 建议每个 DSH 会话选择原生工具或本项目 MCP 一种入口，避免重复工具集合。外部适配插件应将 registry 返回的卸载函数接入其实际生命周期；具体 lifecycle API 必须依据该插件所用 Cordis/DSH 版本编写。
+
+### 在 DSH 内打开 Hub 网页
+
+另装 [`dsh-team-hub-web`](dsh-web-panel/README.md)，然后重启所选 profile。点击左侧「团队协作台」，即可在主面板使用 Hub 网页；它与已有工具插件独立，不要求替换工具插件。正式工作空间首次在页面中使用个人 Hub 令牌登录。页面插件使用 `TEAMHUB_URL` 连接 Hub，也可单独配置浏览器可访问的 `webUrl`；远程 DSH 和 HTTPS 场景的地址要求见插件说明。
 
 ## 6. 验证命令与界限
 
