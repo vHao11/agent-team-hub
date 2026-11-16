@@ -25,11 +25,11 @@ const earlyParent = process.env.TEAMHUB_STOP_PARENT_EXITS_EARLY === '1';
 const prefix = `teamhub-stop-${randomUUID()}`, started = path.join(workspace, `${prefix}-started`), pidFile = path.join(workspace, `${prefix}-pid`);
 const parentPidFile = path.join(workspace, `${prefix}-parent-pid`);
 const finished = path.join(workspace, `${prefix}-unexpected`), childScript = path.join(workspace, `${prefix}-child.mjs`), workerScript = path.join(workspace, `${prefix}-worker.ps1`);
-await fs.writeFile(childScript, `import {writeFileSync} from 'node:fs'; setTimeout(() => writeFileSync(process.argv[2], 'finished'), ${earlyParent ? 20000 : 45000});\n`, { flag: 'wx' });
+await fs.writeFile(childScript, `import {writeFileSync} from 'node:fs'; setTimeout(() => writeFileSync(process.argv[2], 'finished'), 180000);\n`, { flag: 'wx' });
 const quote = value => `'${value.replaceAll("'", "''")}'`;
 const script = `$child = Start-Process -FilePath ${quote(process.execPath)} -ArgumentList @(${quote(childScript)}, ${quote(finished)}) -WindowStyle Hidden -PassThru\n` +
   `[IO.File]::WriteAllText(${quote(pidFile)}, [string]$child.Id)\n[IO.File]::WriteAllText(${quote(parentPidFile)}, [string]$PID)\n` +
-  `[IO.File]::WriteAllText(${quote(started)}, 'started')\nStart-Sleep -Seconds ${earlyParent ? 1 : 50}\n`;
+  `[IO.File]::WriteAllText(${quote(started)}, 'started')\nStart-Sleep -Seconds ${earlyParent ? 1 : 180}\n`;
 await fs.writeFile(workerScript, script, { flag: 'wx' });
 const requester = new HubClient({ url: hubUrl, token: 'demo-lin' }), implementer = new HubClient({ url: hubUrl, token: 'demo-chen' }), tester = new HubClient({ url: hubUrl, token: 'demo-xu' });
 const registry = new AdapterRegistry();
@@ -50,7 +50,7 @@ const pipeline = view.pipeline.id;
 view = await requester.request('POST', `/pipelines/${pipeline}/start`, { operation_id: op(), expected_version: view.pipeline.version });
 await auto.enable({ pipeline_id: pipeline, adapter: 'dsh-superagent', workspace_ref: workspace, auto_accept: true });
 const first = await auto.tick();
-const launch = first[0]?.steps?.find(value => value.step === 'agent' && value.action === 'started');
+const launch = first.find(value => value.pipeline_id === pipeline)?.steps?.find(value => value.step === 'agent' && value.action === 'started');
 if (!launch) throw new Error(`真实派发失败：${JSON.stringify(first)}`);
 let stopConfirmed = false;
 try {
@@ -90,16 +90,16 @@ if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error('后台子进程标�
 const processAlive = target => { try { process.kill(target, 0); return true; } catch (error) { if (error.code === 'ESRCH') return false; throw error; } };
 const alive = () => processAlive(pid);
 assert.equal(alive(), true, '必须先证明真实后台子进程在运行。');
+const parent = Number((await fs.readFile(parentPidFile, 'utf8')).trim());
+if (!Number.isSafeInteger(parent) || parent <= 0) throw new Error('后台主进程标识无效。');
 if (earlyParent) {
-  const parent = Number((await fs.readFile(parentPidFile, 'utf8')).trim());
-  if (!Number.isSafeInteger(parent) || parent <= 0) throw new Error('后台主进程标识无效。');
   const parentDeadline = Date.now() + 12000;
   while (processAlive(parent) && Date.now() < parentDeadline) await new Promise(resolve => setTimeout(resolve, 100));
   assert.equal(processAlive(parent), false, '必须先证明主进程已经退出。');
   // 等待主进程结果收束，留下仍在运行的真实后代进程。
   await new Promise(resolve => setTimeout(resolve, 4000));
   assert.equal(alive(), true, '主进程退出后子进程仍应运行。');
-}
+} else assert.equal(processAlive(parent), true, '正常停止测试的主进程必须在停止前运行。');
 const cancelled = await bridge.cancel(launch.dispatch_id, op());
 const aliveAfterCancel = alive();
 if (cancelled.confirmed) assert.equal(aliveAfterCancel, false, '确认停止时后台子进程仍在运行。');
@@ -113,7 +113,9 @@ assert.equal(run.status, 'cancelled', 'Hub 未收到宿主停止证明。');
 stopConfirmed = true;
 await new Promise(resolve => setTimeout(resolve, 1000));
 assert.equal(alive(), false);
-if (!earlyParent) await assert.rejects(fs.access(finished));
+assert.equal(processAlive(parent), false, '确认停止时主进程仍在运行。');
+// 子进程的自然寿命大于停止期限；任何自然退出都不能算作停止成功。
+await assert.rejects(fs.access(finished));
 await refresh(); await completeHuman(0, implementer, '已确认真实后台工作退出', true);
 assert.equal(view.steps[2].state, 'awaiting_accept');
 assert.equal(view.steps[2].attempt.input_snapshot.upstream_deliveries.length, 2);
@@ -125,4 +127,5 @@ console.log(JSON.stringify({ event: 'live_superagent_stop_workflow_passed', real
 } finally {
   // 验收中断时只停止本次派发，避免遗留测试任务。
   if (!stopConfirmed) await bridge.cancel(launch.dispatch_id, op()).catch(() => {});
+  else await auto.disable(pipeline);
 }
